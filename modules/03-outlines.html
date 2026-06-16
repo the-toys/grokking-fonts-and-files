@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03 · Outlines</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">Module 03</p>
+  <h1>Outlines</h1>
+  <p class="lede">A glyph isn't a picture — it's a set of <em>closed paths</em> the renderer fills.
+  In this font those paths are made of quadratic Bézier curves stored in <code>glyf</code> and
+  located through <code>loca</code>. Learn how points become curves, how curves become a filled
+  shape, and how one glyph can be assembled from others.</p>
+
+  <!-- ───────────────────────── CONCEPT ───────────────────────── -->
+  <span class="section-tag concept">concept</span>
+  <h2>How a glyph is drawn</h2>
+
+  <p>A glyph <strong>outline</strong> is one or more <strong>closed contours</strong> — loops of
+  connected points. The renderer doesn't draw the loops as lines; it <strong>fills the region they
+  enclose</strong>. When contours nest (the hole inside an 'O', the counter inside '永'), a
+  <em>winding rule</em> decides what counts as inside: <strong>non-zero</strong> winding (the usual
+  TrueType/PostScript rule) or <strong>even-odd</strong>. Reverse the direction of an inner contour
+  and, under non-zero winding, it punches a hole instead of adding ink.</p>
+
+  <p>Every coordinate lives in <strong>font units</strong> on the <strong>em square</strong>. For this
+  font <code>unitsPerEm = 1000</code>, so a point like <code>(110, 383)</code> means 110 units right,
+  383 units up, on a 1000×1000 design grid. (The em and how it scales to pixels is the whole of
+  <a href="04-metrics.html">Module 4</a> — for now just read coordinates as positions on a 1000-unit
+  grid.)</p>
+
+  <h3>Two outline technologies</h3>
+  <p>There are two dominant ways to encode those curves, and which one a font uses is announced by its
+  sfnt magic back in <a href="01-sfnt-container.html">Module 1</a>:</p>
+  <ul>
+    <li><strong>TrueType</strong> (what this font is — magic <code>00 01 00 00</code>): uses
+      <strong>quadratic</strong> Bézier curves. Outlines live in the <code>glyf</code> table, and each
+      glyph's byte range is found through the <code>loca</code> index. Points carry a flag marking each
+      as <strong>on-curve</strong> (an anchor the path actually passes through) or
+      <strong>off-curve</strong> (a quadratic <em>control point</em> that bends the curve toward it
+      without being touched).</li>
+    <li><strong>CFF / CFF2</strong> (PostScript-flavoured OTF — magic <code>OTTO</code>): uses
+      <strong>cubic</strong> Bézier curves, stored compactly in a <code>CFF&nbsp;</code> table (note the
+      trailing space — still a 4-byte tag). No <code>glyf</code>/<code>loca</code> at all.</li>
+  </ul>
+
+  <div class="callout key">
+    <span class="label">Quadratic vs cubic, in one line</span>
+    A <strong>quadratic</strong> segment has <strong>one</strong> control point; a <strong>cubic</strong>
+    segment has <strong>two</strong>. Cubics can express an S-curve in a single segment, so CFF often
+    needs fewer points; TrueType makes up for it with cheaper math and the "implied on-curve point"
+    trick below. Same shapes, two encodings.
+  </div>
+
+  <h3>The implied on-curve point (TrueType only)</h3>
+  <p>TrueType allows a shortcut that trips up first-time readers: when <strong>two off-curve control
+  points sit next to each other</strong>, an on-curve point is <strong>implied at their exact
+  midpoint</strong>. The font stores fewer anchors and the renderer reconstructs the missing ones.
+  So a run of off-curve points isn't one impossible mega-curve — it's a chain of quadratic segments
+  joined at implied midpoints.</p>
+
+  <h3>loca: the glyph index into glyf</h3>
+  <p><code>loca</code> is to <code>glyf</code> what the table directory was to the whole file: an index
+  of byte offsets. Entry <em>i</em> and entry <em>i+1</em> give the <strong>start and end</strong> of
+  glyph <em>i</em>'s data inside <code>glyf</code>. That's why <code>loca</code> holds
+  <strong>numGlyphs + 1</strong> entries — you always need the offset <em>after</em> the last glyph to
+  bound it. A side effect: if entry <em>i</em> equals entry <em>i+1</em>, glyph <em>i</em> has zero
+  bytes — an <strong>empty glyph</strong> (like a space). The field <code>head.indexToLocFormat</code>
+  selects the entry size: <strong>0</strong> = 16-bit "short" offsets (stored as the real offset ÷ 2),
+  <strong>1</strong> = 32-bit "long" offsets stored directly.</p>
+
+  <h3>Composite glyphs</h3>
+  <p>A glyph need not draw any outline of its own. A <strong>composite</strong> glyph is built from
+  <strong>references to other glyphs</strong> (its <em>components</em>), each placed with an
+  <strong>offset</strong> and optionally a scale or 2×2 transform. The 'Ä' glyph can be "draw glyph
+  'A', then draw the dieresis glyph shifted up". This is enormous for:</p>
+  <ul>
+    <li><strong>CJK</strong>, where thousands of characters share <strong>radicals</strong> — draw the
+      radical once, reference it everywhere.</li>
+    <li><strong>Accented Latin</strong>, where a base letter plus a combining mark composes hundreds of
+      precomposed characters.</li>
+  </ul>
+  <p>It saves <strong>space</strong> (one stored outline, many references) and enforces
+  <strong>visual consistency</strong> (every accent is the literal same shape).</p>
+
+  <div class="callout">
+    <span class="label">Hinting, briefly</span>
+    At tiny pixel sizes a curve can fall awkwardly across the grid and a stem can blur or vanish. The
+    <code>prep</code> and <code>fpgm</code> programs (TrueType bytecode) plus the <code>gasp</code>
+    table control <em>grid-fitting</em> — nudging points onto pixel boundaries so stems stay crisp.
+    WenKai's <code>prep</code> is only 7 bytes (Module 1's directory), and modern greyscale/antialiased
+    rendering leans on hinting far less than 1990s black-and-white displays did. Useful to know it
+    exists; don't overstate its role today.
+  </div>
+
+  <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
+  <span class="section-tag walk">walkthrough</span>
+  <h2>Reading real outlines from WenKai</h2>
+
+  <p>First, the format question. This font's <code>head.indexToLocFormat = 1</code>, so
+  <code>loca</code> here uses <strong>32-bit long offsets</strong> — each entry is a direct byte offset
+  into <code>glyf</code>, no ÷2. With <code>glyf</code> weighing 24.7&nbsp;MB (Module 1), 16-bit
+  offsets couldn't reach far enough anyway.</p>
+
+  <h3>A simple glyph: '一' (U+4E00)</h3>
+  <p>The CJK character for "one" — a single horizontal stroke. fontTools reports it as
+  <code>isComposite=False</code>, <code>numberOfContours=1</code>, <strong>21 points</strong>, with
+  <code>endPtsOfContours=[20]</code> (the one contour ends at point index 20, i.e. it owns points
+  0–20). Here are its first six points:</p>
+
+<pre><code>point:   0        1        2        3        4        5
+coord:  (110,383)(837,420)(861,422)(881,430)(893,430)(921,413)
+onCurve:  1        1        0        0        0        0
+          └anchor  └anchor  └────── off-curve run ──────┘</code></pre>
+
+  <p>Walk it as the renderer would, starting at point&nbsp;0:</p>
+  <ul>
+    <li><strong>Point 0 <code>(110,383)</code>, on-curve</strong> — the path starts here. The pen is
+      placed on this exact coordinate.</li>
+    <li><strong>Point 1 <code>(837,420)</code>, on-curve</strong> — also an anchor. Two consecutive
+      on-curve points mean a <strong>straight line</strong> from 0 to 1 (no control point between them
+      to bend it). That's the long top edge of the stroke.</li>
+    <li><strong>Points 2–5, all off-curve</strong> — a <strong>run of four control points</strong>
+      <code>(861,422) (881,430) (893,430) (921,413)</code>. Because consecutive off-curve points have
+      <strong>implied on-curve points at their midpoints</strong>, this run is really several quadratic
+      segments chained together: from anchor 1 the curve flows toward control 2, passes through the
+      implied midpoint of 2&amp;3, then toward control 3, through the midpoint of 3&amp;4, and so on —
+      rounding the right end of the stroke. The path never <em>touches</em> points 2–5; they only pull
+      the curve.</li>
+  </ul>
+  <p>So the flag string <code>1 1 0 0 0 0</code> reads as "two anchors, then a run of control points",
+  and the key lesson is that <strong>a run of consecutive off-curve points carries implied on-curve
+  points between each pair</strong>. The remaining 15 points (6–20) continue the loop back around and
+  close it.</p>
+
+  <h3>A second simple glyph: '十' (U+5341)</h3>
+  <p>"Ten" — a vertical stroke crossing a horizontal one. One contour, <strong>46 points</strong>, and
+  its on-curve flags begin <code>1 1 0 1 0 1</code>. Notice the <strong>alternating</strong>
+  anchor/control rhythm (<code>1 0 1 0…</code>) after the first pair — that's the signature of
+  <strong>straighter strokes</strong> with single curves at the corners, versus '一''s longer
+  off-curve run that rounds one broad end. Same encoding, different cadence of points reflecting the
+  different shape.</p>
+
+  <h3>Composite glyphs: spacing punctuation built by reference</h3>
+  <p>The standalone, spacing <strong>dieresis</strong> (the ¨ you type on its own, not the combining
+  one) is a composite with <strong>1 component</strong>: it references the combining-mark glyph
+  <code>dieresiscomb</code> placed at <strong>(x=500, y=0)</strong>. Likewise the spacing
+  <strong>acute</strong> is <strong>1 component</strong> referencing <code>acutecomb</code> at
+  <strong>(x=517, y=0)</strong>.</p>
+  <p>Read that literally: the <code>dieresis</code> glyph contains <strong>no outline of its own</strong>.
+  Its entire <code>glyf</code> record is "draw the <code>dieresiscomb</code> outline, shifted 500 units
+  right". The combining mark is designed to sit over a preceding letter (offset near zero), so the
+  spacing version just translates it into the middle of its own cell. One outline, two characters,
+  guaranteed identical shape — the composite mechanism in miniature.</p>
+
+  <div class="callout proof">
+    <span class="label">See it for yourself</span>
+    <code>~/.venv/bin/python -c "from fontTools.ttLib import TTFont;
+    f=TTFont('LXGWWenKaiMonoGB-Regular.ttf'); g=f['glyf']['u4E00'];
+    print(g.numberOfContours, g.coordinates[:6], list(g.flags[:6]))"</code> prints the contour
+    count, the first coordinates, and the on-curve flags shown above (flag bit 0 = on-curve).
+  </div>
+
+  <!-- ───────────────────────── EXERCISES ───────────────────────── -->
+  <span class="section-tag ex">exercises</span>
+  <h2>Exercises</h2>
+  <p class="legend">Attempt each, then paste your answer/output to your tutor to check.
+  Hints &amp; self-check solutions are collapsible.</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.1</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Classify the points of '一'.</strong> Given the flag sequence
+    <code>1 1 0 0 0 0</code> for the first six points, label each point 0–5 as
+    <em>anchor</em> (on-curve) or <em>control</em> (off-curve). Then explain what the two consecutive
+    off-curve points <strong>2 and 3</strong> imply about the path between them.</p>
+    <details><summary>Show solution</summary>
+      Point 0 = anchor, 1 = anchor, 2 = control, 3 = control, 4 = control, 5 = control. Because points
+      2 and 3 are <em>both</em> off-curve and adjacent, TrueType implies an <strong>on-curve point at
+      their midpoint</strong>: <code>((861+881)/2, (422+430)/2) = (871, 426)</code>. So the curve
+      passes through that implied midpoint, splitting the 2→3 stretch into two quadratic segments
+      rather than one impossible two-control curve.
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.2</span><span class="x-kind concept">concept</span></div>
+    <p><strong>TrueType vs CFF.</strong> For each technology state: how many control points per curve
+    segment, which table(s) hold the outlines, and which sfnt magic (from Module 1) signals it.</p>
+    <details><summary>Show solution</summary>
+      <strong>TrueType:</strong> quadratic = <strong>1</strong> control point per segment; outlines in
+      <code>glyf</code> indexed by <code>loca</code>; magic <code>00 01 00 00</code>.
+      <strong>CFF/CFF2:</strong> cubic = <strong>2</strong> control points per segment; outlines in the
+      <code>CFF&nbsp;</code> table (no <code>glyf</code>/<code>loca</code>); magic
+      <code>OTTO</code>.
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.3</span><span class="x-kind code">programming</span></div>
+    <p><strong>Inspect '十'.</strong> With fontTools, load the font, fetch the glyph
+    <code>'u5341'</code>, and print its <code>numberOfContours</code>, its total number of points, and
+    the count of on-curve vs off-curve points.</p>
+    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+f = TTFont(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
+g = f[<span class="str">"glyf"</span>][<span class="str">"u5341"</span>]
+n = <span class="fn">len</span>(g.coordinates)
+on = <span class="fn">sum</span>(<span class="num">1</span> <span class="kw">for</span> fl <span class="kw">in</span> g.flags <span class="kw">if</span> fl &amp; <span class="num">1</span>)
+<span class="fn">print</span>(g.numberOfContours, n, on, n - on)</code></pre>
+    <details><summary>Hint</summary>
+      <code>g.coordinates</code> is the list of (x,y) points; <code>g.flags</code> is the parallel list
+      of flag bytes. Bit 0 (<code>fl &amp; 1</code>) set means on-curve. Total points should be 46.
+    </details>
+    <p class="check-note">Paste your code and output — I'll confirm the contour count is 1, points = 46,
+    and the on/off split.</p>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.4</span><span class="x-kind code">programming</span></div>
+    <p><strong>Measure '一' from <code>loca</code>.</strong> Compute the byte length of glyph '一'
+    (U+4E00) as the difference of its consecutive <code>loca</code> entries, and confirm it is nonzero
+    (i.e. the glyph really has outline data).</p>
+    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+f = TTFont(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
+gid = f.getGlyphID(<span class="str">"u4E00"</span>)
+loca = f[<span class="str">"loca"</span>]
+length = loca[gid + <span class="num">1</span>] - loca[gid]
+<span class="fn">print</span>(gid, loca[gid], loca[gid + <span class="num">1</span>], length)
+<span class="kw">assert</span> length &gt; <span class="num">0</span></code></pre>
+    <details><summary>Hint</summary>
+      <code>f["loca"]</code> behaves like a list of byte offsets indexed by glyph ID, with
+      numGlyphs+1 entries. Map the character to its glyph ID with <code>f.getGlyphID("u4E00")</code>
+      (or via <code>f.getReverseGlyphMap()["u4E00"]</code>). The length is simply
+      <code>loca[gid+1] - loca[gid]</code>.
+    </details>
+    <p class="check-note">Paste the four printed numbers — I'll check the offsets are consistent and the
+    length is positive.</p>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.5</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Count the loca entries.</strong> <code>loca</code> holds <code>numGlyphs + 1</code>
+    entries. This font's <code>numGlyphs = 46830</code>. How many <code>loca</code> entries are there,
+    and <em>why</em> the extra one?</p>
+    <details><summary>Show solution</summary>
+      <strong>46831</strong> entries. Each glyph <em>i</em>'s data spans from <code>loca[i]</code> to
+      <code>loca[i+1]</code>, so you need one offset <em>past the end of the last glyph</em> to give
+      glyph 46829 an upper bound. Hence numGlyphs+1.
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.6</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Why composites matter.</strong> Why are composite glyphs especially valuable for CJK
+    fonts and for accented Latin? Name the <strong>two</strong> things they save.</p>
+    <details><summary>Show solution</summary>
+      They save <strong>space</strong> and <strong>visual consistency</strong>. CJK characters share
+      radicals and accented Latin characters share base letters and combining marks; storing each
+      shared piece once and <em>referencing</em> it (with a placement offset) avoids duplicating
+      thousands of outlines, and because every reference points at the same outline, the radical or
+      accent is guaranteed to look identical everywhere it appears.
+    </details>
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="3">Mark module complete</button>
+
+  <div class="pager">
+    <a class="prev" href="02-cmap-glyphs.html"><span class="dir">←</span><span class="ttl">02 · cmap &amp; glyph IDs</span></a>
+    <a class="next" href="04-metrics.html"><span class="dir">next →</span><span class="ttl">04 · Metrics &amp; the em</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

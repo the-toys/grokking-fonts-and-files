@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grokking Fonts &amp; Files</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <div class="hero">
+    <p class="eyebrow">A hands-on tutorial</p>
+    <h1>Grokking Fonts &amp; Files</h1>
+    <p class="lede">Understand how a font file is built, byte by byte — from the binary
+    container that wraps it, through glyphs, metrics and shaping, up to font collections
+    and variable fonts. Every fact is pulled from two real fonts on disk, so nothing here
+    is hand-wavy.</p>
+  </div>
+
+  <div class="callout proof">
+    <span class="label">The specimens on the bench</span>
+    We dissect <strong>LXGW WenKai Mono GB</strong> and <strong>LXGW ZhenKai GB</strong> (and the
+    hybrid <code>.ttc</code> a small <code>build.py</code> assembles from them). Reproduce any
+    number in the lessons with <code>specimens/extract.py &lt;font&gt;</code>. See
+    <code>specimens/SPECIMENS.md</code> for the full verified dataset.
+  </div>
+
+  <h2>The modules</h2>
+  <div class="card-grid">
+    <a class="card" href="modules/01-sfnt-container.html"><span class="cnum">01</span>
+      <div class="ctitle">The sfnt container</div>
+      <div class="cq">How is a font file laid out? Header + table directory + offsets.</div></a>
+    <a class="card" href="modules/02-cmap-glyphs.html"><span class="cnum">02</span>
+      <div class="ctitle">cmap &amp; glyph IDs</div>
+      <div class="cq">How a character code becomes a glyph. Encodings, subtable formats.</div></a>
+    <a class="card" href="modules/03-outlines.html"><span class="cnum">03</span>
+      <div class="ctitle">Outlines</div>
+      <div class="cq">How a glyph is drawn — quadratic glyf vs cubic CFF, composites, hinting.</div></a>
+    <a class="card" href="modules/04-metrics.html"><span class="cnum">04</span>
+      <div class="ctitle">Metrics &amp; the em</div>
+      <div class="cq">Advance, side bearings, baseline. Why full-width CJK = 1 em.</div></a>
+    <a class="card" href="modules/05-families.html"><span class="cnum">05</span>
+      <div class="ctitle">Identity &amp; families</div>
+      <div class="cq">name / OS-2 / head — how the OS groups files into one family. (= build.py)</div></a>
+    <a class="card" href="modules/06-shaping.html"><span class="cnum">06</span>
+      <div class="ctitle">Shaping &amp; layout</div>
+      <div class="cq">GSUB / GPOS, OpenType features, ligatures, HarfBuzz.</div></a>
+    <a class="card" href="modules/07-packaging.html"><span class="cnum">07</span>
+      <div class="ctitle">Packaging &amp; frontiers</div>
+      <div class="cq">TTC + shared tables, subsetting, variable &amp; color fonts, WOFF2.</div></a>
+  </div>
+
+  <h2>How to use this</h2>
+  <ul>
+    <li>Each module has three parts: <span class="section-tag concept">concept</span>
+      <span class="section-tag walk">walkthrough</span> on the real bytes, and
+      <span class="section-tag ex">exercises</span>.</li>
+    <li>Exercises are <strong>concept questions</strong> or <strong>programming tasks</strong>.
+      Attempt them, then paste your answer/output back to me (your tutor) — I'll check them.
+      Some include a collapsible hint or self-check solution.</li>
+    <li>Click <span class="kbd">Mark module complete</span> at the bottom of a page to track
+      progress (stored in your browser).</li>
+  </ul>
+
+  <div class="callout">
+    <span class="label">Setup (optional but recommended)</span>
+    To run the coding exercises, have the two source fonts handy and a Python with
+    <code>fonttools</code>. The tutorial repo already references the user's fonts; you can also
+    fetch them from the LXGW GitHub releases. Many early exercises need nothing but
+    <code>xxd</code> and a hex calculator.
+  </div>
+
+  <p style="margin-top:34px"><a class="card" style="display:inline-block" href="modules/01-sfnt-container.html">
+    <span class="cnum">Start →</span><div class="ctitle">Module 01 · The sfnt container</div></a></p>
+</main>
+<script src="assets/app.js"></script>
+</body>
+</html>

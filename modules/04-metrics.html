@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04 · Metrics &amp; the em</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">Module 04</p>
+  <h1>Metrics &amp; the em</h1>
+  <p class="lede">Outlines say what a glyph <em>looks</em> like. Metrics say where it <em>sits</em>:
+  how big the design grid is, how far the pen moves to the next glyph, and where the baseline and
+  line edges fall. Get these numbers right and Latin, Han, and a terminal cursor all snap to the
+  same grid; get them wrong and the same font renders at two different line heights on two
+  machines.</p>
+
+  <!-- ───────────────────────── CONCEPT ───────────────────────── -->
+  <span class="section-tag concept">concept</span>
+  <h2>What makes text line up</h2>
+
+  <p>A glyph's points (Module 3) are not in pixels. They live in abstract <strong>font units</strong>
+  on a square grid called the <strong>em square</strong>. The side of that square is
+  <code>head.unitsPerEm</code> — here <strong>1000</strong>; <strong>2048</strong> is the other common
+  value (TrueType fonts often pick a power of two). Nothing about the grid is tied to a display
+  size:</p>
+
+  <div class="callout key">
+    <span class="label">The em is the unit of decoupling</span>
+    At a rendered size of <strong>N px</strong>, one em is exactly <strong>N px</strong>, and a font-unit
+    coordinate <code>c</code> lands at <code>c / unitsPerEm × N</code> pixels. The designer works in a
+    fixed 1000-unit world; the renderer scales that world to whatever size the user asks for. "Design
+    once in abstract units, scale at draw time" is the same trick as vector graphics, DPI-independent
+    UI, and SVG viewBoxes.
+  </div>
+
+  <h3>Horizontal metrics: advance &amp; side bearings</h3>
+  <p>Per-glyph horizontal metrics live in the <code>hmtx</code> table. Each glyph has two numbers:</p>
+  <ul>
+    <li><strong>advance width</strong> — how far the pen moves <em>right</em> from this glyph's origin
+      to the <em>next</em> glyph's origin. This, not the ink, is what governs column position.</li>
+    <li><strong>left side bearing</strong> (lsb) — the gap from the origin to the glyph's leftmost
+      point. The <strong>right side bearing</strong> is implied:
+      <code>advance − lsb − blackboxWidth</code>, so it isn't stored.</li>
+  </ul>
+  <p>The <strong>baseline</strong> is <code>y = 0</code>. Ascenders go to <code>+y</code>, descenders
+  to <code>−y</code>. The origin sits on the baseline at the left edge of the advance box.</p>
+
+  <h3>The run-length trick in <code>hmtx</code></h3>
+  <p>The horizontal header <code>hhea</code> stores a count, <code>numberOfHMetrics</code>. The
+  <code>hmtx</code> table then holds that many <code>(advance, lsb)</code> pairs — and after them,
+  for every <em>remaining</em> glyph, it stores <strong>only an lsb</strong>. Those trailing glyphs
+  all <strong>reuse the last advance</strong> in the array. So
+  <code>numberOfHMetrics</code> can be smaller than <code>numGlyphs</code>.</p>
+
+  <div class="callout">
+    <span class="label">Why this exists</span>
+    In a monospace or CJK font, thousands of glyphs share one identical advance. Storing it once and
+    run-length-eliding the rest shrinks the table dramatically — a tiny version of the "don't repeat a
+    constant" idea you see in PCM silence runs, sparse matrices, and columnar databases.
+  </div>
+
+  <h3>Vertical writing</h3>
+  <p>For top-to-bottom CJK, the analogues are <code>vhea</code> / <code>vmtx</code> (both present in
+  WenKai — you saw them in Module 1's directory). Instead of an advance <em>width</em> they carry an
+  advance <strong>height</strong>: how far the pen drops to the next glyph when text runs in a vertical
+  column. This connects to the <code>vert</code> feature in Module 6, which swaps in vertical glyph
+  variants.</p>
+
+  <h3>Line spacing: three competing ascent/descent pairs</h3>
+  <p>Here is the famous trap. A font carries <strong>three</strong> sets of vertical line metrics, and
+  applications disagree on which to honor:</p>
+  <ul>
+    <li><code>hhea.ascent</code> / <code>descent</code> / <code>lineGap</code> — the original
+      typographic intent (Mac/CoreText lean on these).</li>
+    <li>OS/2 <code>sTypoAscender</code> / <code>sTypoDescender</code> / <code>sTypoLineGap</code> — the
+      "typographic" set, used <em>when</em> the OS/2 <code>fsSelection</code>
+      <code>USE_TYPO_METRICS</code> bit is set.</li>
+    <li>OS/2 <code>usWinAscent</code> / <code>usWinDescent</code> — the Windows <em>clipping box</em>;
+      anything outside it may be chopped, and GDI uses it for line height.</li>
+  </ul>
+  <p>When these three disagree, the <em>same font file</em> produces different line heights across
+  platforms and apps. This is the single most common source of cross-platform line-height surprise.</p>
+
+  <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
+  <span class="section-tag walk">walkthrough</span>
+  <h2>The real metrics of WenKai Mono</h2>
+
+  <p>Global numbers, straight from the file:</p>
+  <table class="mono">
+    <tr><th>field</th><th>value</th><th>where</th></tr>
+    <tr><td>unitsPerEm</td><td>1000</td><td>head</td></tr>
+    <tr><td>numGlyphs</td><td>46830</td><td>maxp</td></tr>
+    <tr><td>numberOfHMetrics</td><td>46821</td><td>hhea</td></tr>
+  </table>
+
+  <p>And three glyphs' horizontal metrics, <code>(advance, lsb)</code> in font units:</p>
+  <table class="mono">
+    <tr><th>glyph</th><th>advance</th><th>lsb</th><th>advance in em</th></tr>
+    <tr><td>'A' (U+0041)</td><td>500</td><td>21</td><td>0.5 em — half-width</td></tr>
+    <tr><td>'一' (U+4E00)</td><td>1000</td><td>59</td><td>1.0 em — full-width</td></tr>
+    <tr><td>'i' (U+0069)</td><td>500</td><td>73</td><td>0.5 em — half-width</td></tr>
+  </table>
+
+  <div class="callout key">
+    <span class="label">Why the terminal grid lines up</span>
+    <code>'一'</code> advances <strong>1000 = exactly 1 em</strong>: full-width. <em>Every</em> CJK
+    ideograph in this font advances one full em, which is precisely why terminal columns align under
+    Chinese text — each Han glyph occupies exactly one cell. The Latin <code>'A'</code> and
+    <code>'i'</code> both advance <strong>500 = half an em</strong>, so in this Mono face the Latin is
+    half-width: <strong>two Latin cells equal one CJK cell</strong>. Note the side bearings differ
+    (21 vs 73) — the ink sits in different spots inside the box — but it's the <em>advance</em>, not the
+    lsb, that fixes the column. Same advance ⇒ same column position, whatever the ink does inside.
+  </div>
+
+  <h3>The three vertical-metric pairs, for this font</h3>
+  <table class="mono">
+    <tr><th>source</th><th>ascent</th><th>descent</th><th>lineGap</th></tr>
+    <tr><td>hhea</td><td>928</td><td>−241</td><td>0</td></tr>
+    <tr><td>OS/2 sTypo</td><td>880</td><td>−120</td><td>0</td></tr>
+    <tr><td>OS/2 usWin</td><td>928</td><td>241 (positive)</td><td>—</td></tr>
+  </table>
+  <p>All three pairs <strong>differ</strong>: hhea spans 928/−241, the typographic set is tighter at
+  880/−120, and the Windows clipping box is 928/241. An app that sums <code>hhea</code> (1169 units)
+  and one that sums <code>sTypo</code> (1000 units) will draw the same text at noticeably different
+  line heights. That gap <em>is</em> the cross-platform line-height trap, in concrete numbers.</p>
+
+  <h3>The run-length elision, concretely</h3>
+  <p>Here <code>numberOfHMetrics = 46821</code> but <code>numGlyphs = 46830</code> — a difference of
+  <strong>9</strong>. So <code>hmtx</code> stores 46821 full <code>(advance, lsb)</code> pairs, then 9
+  bare lsb values. Those <strong>last 9 glyphs carry no advance of their own</strong>; each reuses the
+  advance of glyph 46820 (the final entry in the pairs array). The font writer ordered the glyph table
+  so that a run of glyphs sharing the final advance ends up at the very end, letting the table drop
+  9 redundant advances.</p>
+
+  <div class="callout proof">
+    <span class="label">See it in build.py</span>
+    Both WenKai <em>and</em> ZhenKai advance <code>'一'</code> at <strong>1000 / 1000 = 1.000 em</strong>.
+    That equality is why <code>lxgw-wenkai-zhenkai/build.py</code> can drop the ZhenKai face in as the
+    bold without <strong>re-metricizing</strong> anything: if both faces put every Han glyph one full
+    em wide, CJK columns stay aligned after the swap. The build script prints this advance/unitsPerEm
+    comparison as its sanity check before assembling the hybrid.
+  </div>
+
+  <!-- ───────────────────────── EXERCISES ───────────────────────── -->
+  <span class="section-tag ex">exercises</span>
+  <h2>Exercises</h2>
+  <p class="legend">Attempt each, then paste your answer/output to your tutor to check.
+  Hints &amp; self-check solutions are collapsible.</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.1</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Units to pixels.</strong> Rendering at <strong>16 px</strong> with
+    <code>unitsPerEm = 1000</code>, how many pixels wide is the advance of <code>'一'</code>
+    (advance 1000) versus <code>'A'</code> (advance 500)?</p>
+    <details><summary>Show solution</summary>
+      Pixels = advance / unitsPerEm × N. For <code>'一'</code>: 1000/1000 × 16 = <strong>16 px</strong>
+      (one full em). For <code>'A'</code>: 500/1000 × 16 = <strong>8 px</strong> (half an em). Two
+      <code>'A'</code> cells (8+8) exactly equal one <code>'一'</code> cell (16).
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.2</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Why the grid holds.</strong> Explain why every full-width CJK glyph advancing exactly
+    1 em makes a terminal grid line up, while the Latin at 500 still fits the same grid.</p>
+    <details><summary>Show solution</summary>
+      A monospace terminal lays out fixed-width cells. If every Han glyph advances exactly 1 em, each
+      lands on a cell boundary and the next glyph starts at the next boundary — columns never drift.
+      The Latin advances 0.5 em, an exact divisor of the cell, so two Latin glyphs fill one CJK cell
+      and the grid stays intact. It works because 500 and 1000 are commensurate (one is a clean
+      fraction of the other); an arbitrary advance like 537 would break alignment.
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.3</span><span class="x-kind code">programming</span></div>
+    <p><strong>Read the metrics yourself.</strong> With fontTools, print <code>(advance, lsb)</code> for
+    <code>'一'</code>, <code>'A'</code>, and <code>'i'</code> via <code>f['hmtx']</code> and the cmap,
+    then assert <code>'一'</code>'s advance equals <code>unitsPerEm</code>.</p>
+    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+f = TTFont(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
+cmap = f.getBestCmap()
+hmtx = f[<span class="str">"hmtx"</span>]
+upm  = f[<span class="str">"head"</span>].unitsPerEm
+<span class="kw">for</span> ch <span class="kw">in</span> <span class="str">"一Ai"</span>:
+    name = cmap[<span class="fn">ord</span>(ch)]
+    adv, lsb = hmtx[name]
+    <span class="fn">print</span>(ch, name, adv, lsb)
+<span class="kw">assert</span> hmtx[cmap[<span class="fn">ord</span>(<span class="str">"一"</span>)]][<span class="num">0</span>] == upm</code></pre>
+    <details><summary>Hint</summary>
+      <code>getBestCmap()</code> returns a <code>{codepoint: glyphName}</code> dict; index it with
+      <code>ord(ch)</code>. <code>hmtx[glyphName]</code> yields a <code>(advance, lsb)</code> tuple.
+      Run with <code>~/.venv/bin/python</code>.
+    </details>
+    <p class="check-note">You should see <code>(1000,59)</code>, <code>(500,21)</code>,
+    <code>(500,73)</code> and the assert passing. Paste your output — I'll confirm.</p>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.4</span><span class="x-kind concept">concept</span></div>
+    <p><strong>The shrinking table.</strong> Explain why <code>numberOfHMetrics</code> (46821) can be
+    smaller than <code>numGlyphs</code> (46830). What do the trailing 9 glyphs use for their advance?</p>
+    <details><summary>Show solution</summary>
+      <code>hmtx</code> stores <code>numberOfHMetrics</code> full <code>(advance, lsb)</code> pairs, then
+      only lsb values for the rest. The trailing <code>46830 − 46821 = 9</code> glyphs have no advance
+      of their own; each <strong>reuses the last advance in the pairs array</strong> (that of glyph
+      46820). It's run-length elision: when a run of glyphs at the end share one advance, you store it
+      once instead of 9 times, saving 9 × 2 bytes and signalling "same as last".
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.5</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Three sources, one trap.</strong> Name the three ascent/descent sources, give this
+    font's values from the walkthrough, and explain how two apps can render this same font at
+    different line heights.</p>
+    <details><summary>Show solution</summary>
+      The three sources: (1) <code>hhea.ascent/descent/lineGap</code> = 928 / −241 / 0;
+      (2) OS/2 <code>sTypoAscender/Descender/LineGap</code> = 880 / −120 / 0;
+      (3) OS/2 <code>usWinAscent/usWinDescent</code> = 928 / 241.
+      An app that derives line height from <code>hhea</code> (928 + 241 = 1169 units) draws taller
+      lines than one using the typographic set (880 + 120 = 1000 units), and a Windows app may use the
+      <code>usWin</code> clipping box instead. Because the three disagree and there's no universal rule
+      for which wins (the <code>USE_TYPO_METRICS</code> bit only nudges some apps toward the sTypo set),
+      the same font yields different line heights across platforms.
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.6</span><span class="x-kind code">programming</span></div>
+    <p><strong>Verify the build.py claim.</strong> Load <em>both</em> fonts, and for each compute
+    <code>'一'</code>'s advance ÷ <code>unitsPerEm</code>. Confirm the two ratios are equal — the
+    alignment guarantee that lets ZhenKai be dropped in as the bold without re-metricizing.</p>
+    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+<span class="kw">def</span> <span class="fn">han_em</span>(path):
+    f = TTFont(path)
+    name = f.getBestCmap()[<span class="num">0x4E00</span>]
+    <span class="kw">return</span> f[<span class="str">"hmtx"</span>][name][<span class="num">0</span>] / f[<span class="str">"head"</span>].unitsPerEm
+a = han_em(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
+b = han_em(<span class="str">"LXGWZhenKaiGB-Regular.ttf"</span>)
+<span class="fn">print</span>(a, b)
+<span class="kw">assert</span> a == b == <span class="num">1.0</span></code></pre>
+    <details><summary>If you only have one font</summary>
+      Compute the ratio for the one you have and state what equality <em>would</em> prove: if both
+      faces put <code>'一'</code> at exactly 1.0 em, every full-width column keeps the same width after
+      a regular→bold swap, so no advance needs recomputing — columns stay aligned for free.
+    </details>
+    <p class="check-note">Both ratios should print <code>1.0</code> and the assert should pass. Paste
+    your output — I'll confirm.</p>
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="4">Mark module complete</button>
+
+  <div class="pager">
+    <a class="prev" href="03-outlines.html"><span class="dir">←</span><span class="ttl">03 · Outlines</span></a>
+    <a class="next" href="05-families.html"><span class="dir">next →</span><span class="ttl">05 · Identity &amp; families</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

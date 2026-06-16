@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01 · The sfnt container</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">Module 01</p>
+  <h1>The sfnt container</h1>
+  <p class="lede">A font file is a binary container: a small <em>directory</em> at the front
+  saying "here's what's inside and at what byte offset", followed by the data blobs (called
+  <em>tables</em>) it points to. Learn this skeleton once and you can read fonts, and ZIP, ELF,
+  PNG, TIFF — they all share it.</p>
+
+  <!-- ───────────────────────── CONCEPT ───────────────────────── -->
+  <span class="section-tag concept">concept</span>
+  <h2>The one big idea: index + payload, joined by offsets</h2>
+
+  <p>Open a <code>.ttf</code> / <code>.otf</code> and you are looking at an <strong>sfnt</strong>
+  ("spline font" / "scalable font") container. Its shape is universal to random-access binary
+  formats:</p>
+
+  <ul>
+    <li>A <strong>header</strong> (12 bytes) announcing the format and how many tables follow.</li>
+    <li>A <strong>table directory</strong>: one fixed-size record per table — its 4-byte
+      <em>tag</em>, a checksum, its <em>offset</em> from the start of the file, and its <em>length</em>.</li>
+    <li>The <strong>table bodies</strong> themselves, sitting anywhere in the file, in any order,
+      reachable only through the offsets in the directory.</li>
+  </ul>
+
+  <div class="callout key">
+    <span class="label">The transferable insight</span>
+    The directory is <strong>sorted one way</strong> (by tag, for fast lookup) while the payload
+    is <strong>laid out another way</strong> (whatever order the writer chose). The offset field is
+    the only thing linking the two. "Index sorted for search, payload placed for convenience,
+    joined by absolute offsets" is the essence of every seekable binary format.
+  </div>
+
+  <p>Two consequences worth internalizing now:</p>
+  <ul>
+    <li><strong>You never parse a font front-to-back.</strong> You read the tiny directory, then
+      <em>seek</em> to whichever table you need. A renderer that only wants character mapping reads
+      the header, finds <code>cmap</code> in the directory, jumps to its offset, and ignores the
+      24&nbsp;MB of outlines.</li>
+    <li><strong>Tables are independent blobs.</strong> Editing one (say, renaming the font) doesn't
+      require touching any other — exactly what makes the <code>build.py</code> retag trick cheap.</li>
+  </ul>
+
+  <h3>Magic numbers &amp; tags</h3>
+  <p>The first 4 bytes are a <strong>magic number</strong> — how a file format announces "this is
+  what I am". For sfnt the values you'll meet:</p>
+  <table class="mono">
+    <tr><th>first 4 bytes</th><th>meaning</th></tr>
+    <tr><td>00 01 00 00</td><td>TrueType outlines (a <code>glyf</code> table) — version 1.0</td></tr>
+    <tr><td>4F 54 54 4F ("OTTO")</td><td>CFF / PostScript outlines</td></tr>
+    <tr><td>74 74 63 66 ("ttcf")</td><td>a font <em>collection</em> (Module 7)</td></tr>
+    <tr><td>74 72 75 65 ("true")</td><td>legacy Apple TrueType</td></tr>
+  </table>
+  <p>A <strong>tag</strong> is just four ASCII bytes used as a name — <code>'G','P','O','S'</code>
+  is the integer <code>0x47504F53</code>. Tags are everywhere: PNG chunks, RIFF/WAV, Mac type codes.
+  Note the quirk that one table is literally named <code>OS/2</code> (with the slash) — still 4 bytes.</p>
+
+  <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
+  <span class="section-tag walk">walkthrough</span>
+  <h2>Decoding the real header of WenKai</h2>
+
+  <p>Here are the genuine first 12 bytes of <code>LXGWWenKaiMonoGB-Regular.ttf</code>
+  (everything in OpenType is <strong>big-endian</strong> — most-significant byte first, the opposite
+  of x86 memory order):</p>
+
+<pre><code>00 01 00 00   00 11   01 00   00 04   00 10
+└────┬────┘   └─┬─┘   └─┬─┘   └─┬─┘   └─┬─┘
+ sfntVersion  numTab  srchRng entSel  rngShift</code></pre>
+
+  <table>
+    <tr><th class="mono">bytes</th><th>field</th><th>value</th><th>meaning</th></tr>
+    <tr><td class="mono">00 01 00 00</td><td>sfntVersion</td><td class="mono">0x00010000</td><td>TrueType outlines inside</td></tr>
+    <tr><td class="mono">00 11</td><td>numTables</td><td class="mono">17</td><td>17 directory records follow</td></tr>
+    <tr><td class="mono">01 00</td><td>searchRange</td><td class="mono">256</td><td>binary-search hint</td></tr>
+    <tr><td class="mono">00 04</td><td>entrySelector</td><td class="mono">4</td><td>binary-search hint</td></tr>
+    <tr><td class="mono">00 10</td><td>rangeShift</td><td class="mono">16</td><td>binary-search hint</td></tr>
+  </table>
+
+  <p>Those last three are a fossil of 1990s optimization: they let a reader binary-search the
+  directory without computing logarithms at runtime. They're fully derivable from
+  <code>numTables = 17</code>:</p>
+<pre><code>largest power of two ≤ 17   = 16 = 2⁴
+searchRange   = 16 × 16 bytes/record = 256   ✓
+entrySelector = log₂(16)             = 4     ✓
+rangeShift    = 17×16 − 256          = 16    ✓</code></pre>
+  <p>Modern parsers ignore these and just loop, but they're a tell that <strong>the directory is
+  sorted by tag</strong> (otherwise binary search would be impossible). A malformed font can lie
+  here; robust readers recompute.</p>
+
+  <h3>The directory records (16 bytes each)</h3>
+  <p>After the header come <code>numTables</code> records of <code>tag(4) checksum(4) offset(4)
+  length(4)</code>. The very first record, raw:</p>
+<pre><code>47 50 4f 53   db 9e 76 46   01 88 e1 dc   00 00 01 a4
+└─ "GPOS" ─┘  └─checksum─┘   └─ offset ─┘  └─ length ─┘
+                            =0x0188E1DC    =0x1A4
+                            =25,747,932    =420</code></pre>
+
+  <p>And the full directory as read back from the file (note this is sorted by <strong>offset</strong>
+  for readability — on disk the <em>records</em> are sorted by tag):</p>
+  <table class="mono">
+    <tr><th>tag</th><th>offset</th><th>length</th><th>what it is</th></tr>
+    <tr><td>head</td><td>284</td><td>54</td><td>global header (units, bbox, flags)</td></tr>
+    <tr><td>hhea</td><td>340</td><td>36</td><td>horizontal header</td></tr>
+    <tr><td>maxp</td><td>376</td><td>32</td><td>glyph count + limits</td></tr>
+    <tr><td>OS/2</td><td>408</td><td>96</td><td>weight/style/PANOSE (Mod 5)</td></tr>
+    <tr><td>hmtx</td><td>504</td><td>187302</td><td>advance widths (Mod 4)</td></tr>
+    <tr><td>cmap</td><td>187808</td><td>217212</td><td>char → glyph (Mod 2)</td></tr>
+    <tr><td>prep</td><td>405020</td><td>7</td><td>hinting pre-program</td></tr>
+    <tr><td>loca</td><td>405028</td><td>187324</td><td>glyph location index (Mod 3)</td></tr>
+    <tr><td>glyf</td><td>592352</td><td>24708009</td><td>the outlines — 24.7 MB! (Mod 3)</td></tr>
+    <tr><td>name</td><td>25300364</td><td>1190</td><td>human/family names (Mod 5)</td></tr>
+    <tr><td>post</td><td>25301556</td><td>446366</td><td>PostScript/glyph-name data</td></tr>
+    <tr><td>gasp</td><td>25747924</td><td>8</td><td>grid-fit / anti-alias control</td></tr>
+    <tr><td>GPOS</td><td>25747932</td><td>420</td><td>positioning (Mod 6)</td></tr>
+    <tr><td>GSUB</td><td>25748352</td><td>5564</td><td>substitution (Mod 6)</td></tr>
+    <tr><td>meta</td><td>25753916</td><td>69</td><td>metadata</td></tr>
+    <tr><td>vhea</td><td>25753988</td><td>36</td><td>vertical header (CJK vertical)</td></tr>
+    <tr><td>vmtx</td><td>25754024</td><td>93662</td><td>vertical metrics</td></tr>
+  </table>
+
+  <div class="callout proof">
+    <span class="label">See it for yourself</span>
+    <code>xxd -l 64 LXGWWenKaiMonoGB-Regular.ttf</code> shows the header + first records.
+    <code>specimens/extract.py LXGWWenKaiMonoGB-Regular.ttf</code> prints this whole directory.
+  </div>
+
+  <p>Look at the offsets: <code>head</code> physically comes first (284), <code>glyf</code> is a
+  giant block in the middle, <code>GPOS</code> sits near the very end (25.7&nbsp;MB in). Yet in the
+  on-disk directory the records appear as <code>GPOS, GSUB, OS/2, cmap…</code> — alphabetical by tag
+  (uppercase ASCII sorts before lowercase, so <code>G</code>=0x47 precedes <code>c</code>=0x63).
+  <strong>That gap between record order and body order is the whole lesson.</strong></p>
+
+  <h3>Integrity: checksums</h3>
+  <p>Each record carries a <code>checksum</code> — the table's bytes summed as big-endian
+  <code>uint32</code>s with 32-bit wraparound. The <code>head</code> table additionally stores
+  <code>checkSumAdjustment</code>, a fudge value chosen so the <em>whole file</em> checksums to the
+  constant <code>0xB1B0AFBA</code>. Same job as a CRC in PNG/ZIP: detect corruption, not tampering
+  (that's what the <code>DSIG</code> digital-signature table is for).</p>
+
+  <div class="callout">
+    <span class="label">Required vs optional tables</span>
+    A valid TrueType font must contain <code>cmap, head, hhea, hmtx, maxp, name, OS/2, post</code>
+    plus <code>glyf</code>+<code>loca</code> (for TrueType outlines). Everything else
+    (<code>GPOS, GSUB, gasp, prep, meta, vhea, vmtx…</code>) is optional. WenKai carries the vertical
+    ones because CJK text can be set top-to-bottom.
+  </div>
+
+  <!-- ───────────────────────── EXERCISES ───────────────────────── -->
+  <span class="section-tag ex">exercises</span>
+  <h2>Exercises</h2>
+  <p class="legend">Attempt each, then paste your answer/output to your tutor to check.
+  Hints &amp; self-check solutions are collapsible.</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">1.1</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Decode a directory record cold.</strong> The <code>OS/2</code> record's raw bytes are:</p>
+    <pre><code>4f 53 2f 32   fe 89 fd aa   00 00 01 98   00 00 00 60</code></pre>
+    <p>Give the table's <strong>offset</strong> and <strong>length</strong> in decimal, and confirm
+    them against the directory above.</p>
+    <details><summary>Show solution</summary>
+      offset = 0x00000198 = <strong>408</strong>; length = 0x00000060 = <strong>96</strong>.
+      Matches the <code>OS/2 408 96</code> row. (Tag <code>4f 53 2f 32</code> = "OS/2",
+      <code>fe 89 fd aa</code> is the checksum.)
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">1.2</span><span class="x-kind code">programming</span></div>
+    <p><strong>Predict, then verify, the search fields for ZhenKai.</strong> Run:</p>
+    <pre><code>xxd -l 12 LXGWZhenKaiGB-Regular.ttf</code></pre>
+    <p>Read <code>numTables</code> from the bytes, then <em>compute</em>
+    <code>searchRange / entrySelector / rangeShift</code> by hand and check them against the file.
+    Do they match the formula?</p>
+    <details><summary>Hint</summary>
+      Bytes 4–5 are numTables. Find the largest power of two ≤ that. searchRange = (that)×16,
+      entrySelector = its log₂, rangeShift = numTables×16 − searchRange.
+    </details>
+    <p class="check-note">Paste the 12 bytes and your computed values — I'll confirm.</p>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">1.3</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Identify the collection magic.</strong> Run
+    <code>xxd -l 16 LXGWHybrid.ttc</code>. What are the first 4 bytes as ASCII, and what does that
+    tell you the file is? How does it differ from a plain <code>.ttf</code>'s magic?</p>
+    <details><summary>Show solution</summary>
+      <code>74 74 63 66</code> = "ttcf" — a TrueType/OpenType <em>Collection</em>. Instead of one
+      sfnt, the file starts with a collection header listing byte offsets to several embedded sfnt
+      directories that <em>share</em> table data. We dissect this in Module 7.
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">1.4</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Payload order ≠ directory order.</strong> <code>cmap</code> is at offset 187808,
+    length 217212. Compute the byte where it ends. Which table's body begins there? Is that table
+    <code>cmap</code>'s <em>alphabetical</em> neighbor in the directory? What does the answer prove?</p>
+    <details><summary>Show solution</summary>
+      187808 + 217212 = <strong>405020</strong>, which is exactly where <code>prep</code> begins.
+      But alphabetically <code>cmap</code>'s directory neighbors are <code>OS/2</code> and
+      <code>gasp</code> — not <code>prep</code>. So the bodies are laid out independently of the
+      sorted record order: the offset is the only link. (Tables here happen to be tightly packed
+      end-to-end, but that isn't required — there can be padding/gaps.)
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">1.5</span><span class="x-kind code">programming</span></div>
+    <p><strong>Write a minimal sfnt parser</strong> — no fonttools, just <code>struct</code>. Open the
+    WenKai <code>.ttf</code>, read the header, then print <code>numTables</code> and every table's
+    <code>tag offset length</code>. You'll have built a real font parser in ~15 lines.</p>
+    <pre><code><span class="kw">import</span> struct, sys
+<span class="kw">with</span> <span class="fn">open</span>(sys.argv[<span class="num">1</span>], <span class="str">"rb"</span>) <span class="kw">as</span> f:
+    ver, n, *_ = struct.unpack(<span class="str">"&gt;IHHHH"</span>, f.read(<span class="num">12</span>))   <span class="cmt"># &gt; = big-endian</span>
+    <span class="fn">print</span>(<span class="str">f"version=</span>{ver:#x}<span class="str"> numTables=</span>{n}<span class="str">"</span>)
+    <span class="kw">for</span> _ <span class="kw">in</span> <span class="fn">range</span>(n):
+        tag, csum, off, length = struct.unpack(<span class="str">"&gt;4sIII"</span>, f.read(<span class="num">16</span>))
+        <span class="fn">print</span>(<span class="str">f"  </span>{tag.decode():5}<span class="str"> </span>{off:&gt;10}<span class="str"> </span>{length:&gt;10}<span class="str">"</span>)</code></pre>
+    <p>Then: do your printed offsets/lengths match the table above? <strong>Bonus:</strong> the records
+    you read are in tag order — sort your output by <code>offset</code> instead and confirm
+    <code>head</code> comes first physically.</p>
+    <details><summary>Hint: the format strings</summary>
+      Header is one <code>uint32</code> + four <code>uint16</code> → <code>"&gt;IHHHH"</code>.
+      Each record is a 4-byte tag + three <code>uint32</code> → <code>"&gt;4sIII"</code>.
+      <code>4s</code> gives you raw bytes; <code>.decode()</code> turns them to ASCII.
+    </details>
+    <p class="check-note">Paste your code and its output — I'll verify it against the real file.</p>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">1.6</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Synthesize.</strong> In one or two sentences each: (a) why can a text renderer that only
+    needs character→glyph mapping skip reading 24&nbsp;MB of this 25&nbsp;MB file? (b) why does
+    renaming a font (Module 5) <em>not</em> require rewriting the <code>glyf</code> table?</p>
+    <details><summary>Show solution</summary>
+      (a) It reads the 12-byte header + directory, finds the <code>cmap</code> record, and seeks
+      straight to offset 187808 — random access means it never touches <code>glyf</code> at 592352.
+      (b) Names live entirely in the <code>name</code>/<code>OS/2</code>/<code>head</code> tables;
+      outlines live in <code>glyf</code>. Tables are independent blobs, so you rewrite the small
+      metadata tables and leave the giant outline table byte-for-byte identical — which is exactly
+      why the hybrid <code>.ttc</code> can re-label fonts almost for free.
+    </details>
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="1">Mark module complete</button>
+
+  <div class="pager">
+    <a class="prev" href="../index.html"><span class="dir">←</span><span class="ttl">Home</span></a>
+    <a class="next" href="02-cmap-glyphs.html"><span class="dir">next →</span><span class="ttl">02 · cmap &amp; glyph IDs</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>
