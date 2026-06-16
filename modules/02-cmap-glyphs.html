@@ -15,8 +15,10 @@
   <em>glyph IDs</em> — small integers <code>0 … numGlyphs−1</code>. The <code>cmap</code> table is the
   bridge from the Unicode codepoints in your text to those numbers. It is the <strong>first</strong>
   step of turning text into pixels, and deliberately not the last.</p>
+  <p class="legend">Exercises are <strong>interleaved</strong> — do each as you reach it, then paste your
+  answer/output to your tutor. Hints &amp; self-check solutions are collapsible.</p>
 
-  <!-- ───────────────────────── CONCEPT ───────────────────────── -->
+  <!-- ───────────────────────── CONCEPT 1 ───────────────────────── -->
   <span class="section-tag concept">concept</span>
   <h2>How a character becomes a glyph</h2>
 
@@ -33,10 +35,10 @@
 
   <p>So the very first thing a renderer does with <code>"A一"</code> is look each codepoint up in the
   <code>cmap</code> to get a glyph ID, then carry those IDs forward to every later stage (outlines,
-  metrics, positioning). The mental model:</p>
+  metrics, positioning). The mental model, with this font's real glyph IDs:</p>
 
-<pre><code>"A"  → U+0041 ──cmap──▶ GID 36   ──glyf──▶ outline ──hmtx──▶ width
-"一" → U+4E00 ──cmap──▶ GID n    ──glyf──▶ outline ──hmtx──▶ width</code></pre>
+<pre><code>"A"  → U+0041 ──cmap──▶ GID 1     ──glyf──▶ outline ──hmtx──▶ width
+"一" → U+4E00 ──cmap──▶ GID 3171  ──glyf──▶ outline ──hmtx──▶ width</code></pre>
 
   <div class="callout key">
     <span class="label">The transferable insight</span>
@@ -48,7 +50,40 @@
     shaping answers "given the surrounding run, which glyphs should we actually use, and where".
   </div>
 
-  <h3>Why a <em>table of subtables</em>?</h3>
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.1</span><span class="x-kind concept">concept</span></div>
+    <p><strong>The special glyph.</strong> Why is glyph ID <code>0</code> special, and what appears on
+    screen when a codepoint has no <code>cmap</code> entry?</p>
+    <details><summary>Show solution</summary>
+      Glyph ID 0 is reserved in every sfnt font as <code>.notdef</code> — the designated "missing glyph".
+      When you request a codepoint the font does not map, the lookup yields GID 0 (or no entry, treated
+      as GID 0), so the renderer draws <code>.notdef</code>: usually an empty or crossed rectangle, the
+      <strong>tofu</strong> box. It signals "this font has no glyph for that character" — the text and
+      the encoding are fine; coverage is what's missing.
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.2</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Where cmap stops and shaping starts.</strong> Consider the single precomposed character
+    <code>ﬁ</code> (<code>U+FB01</code>, the "fi" ligature) versus typing the two characters
+    <code>f</code> + <code>i</code>. Which one is resolved by <code>cmap</code>, and which one needs the
+    shaping engine? Explain the boundary.</p>
+    <details><summary>Show solution</summary>
+      <code>U+FB01</code> is a real codepoint, so <code>cmap</code> maps it directly to the single fi
+      ligature glyph — one lookup, done. Typing <code>f</code> then <code>i</code> gives
+      <em>two</em> codepoints (<code>U+0066</code>, <code>U+0069</code>); <code>cmap</code> maps each to
+      its own glyph independently, because <code>cmap</code> has no notion of "these two are adjacent".
+      Fusing them into one ligature glyph is a <strong>contextual</strong> decision, which is the job of
+      <code>GSUB</code> (the <code>liga</code> feature) in the shaping stage. That is the boundary:
+      <code>cmap</code> = context-free character→glyph; shaping = context-dependent glyph→glyph(s). We
+      cover this in <strong>Module 6</strong>.
+    </details>
+  </div>
+
+  <!-- ───────────────────────── CONCEPT 2 ───────────────────────── -->
+  <span class="section-tag concept">concept</span>
+  <h2>One table, many subtables</h2>
   <p>The <code>cmap</code> table is not a single mapping. It is a list of <strong>subtables</strong>, each
   declaring an audience and an encoding. The reason is historical: different platforms wanted different
   character encodings, and OpenType chose to ship several mappings in one table rather than pick a
@@ -57,9 +92,7 @@
     <li>a <strong>(platformID, encodingID)</strong> pair — <em>who</em> this subtable is for;</li>
     <li>a <strong>format</strong> — <em>how</em> the codepoint→GID data is encoded.</li>
   </ul>
-  <p>A renderer scans the subtables and picks the best one <em>it</em> understands. Two platforms can
-  share the exact same mapping data presented under two different <code>(platformID, encodingID)</code>
-  labels — which is exactly what we'll see below.</p>
+  <p>A renderer scans the subtables and picks the best one <em>it</em> understands.</p>
 
   <h3>platformID and encodingID</h3>
   <table>
@@ -68,9 +101,10 @@
     <tr><td class="mono">1</td><td>Macintosh (legacy)</td><td class="mono">(1,0) = Mac Roman</td></tr>
     <tr><td class="mono">3</td><td>Windows</td><td class="mono">(3,1) = BMP, (3,10) = full Unicode</td></tr>
   </table>
-  <p>The pairs you meet constantly in modern fonts are <code>(3,1)</code> "Windows BMP",
-  <code>(3,10)</code> "Windows full Unicode", and the Unicode-platform equivalents
-  <code>(0,4)</code>/<code>(0,6)</code>.</p>
+  <p>There is <strong>no Linux platform ID</strong> — the enum predates Linux desktop text. Linux
+  (FreeType/HarfBuzz/fontconfig), macOS (CoreText) and Windows (DirectWrite) all just read a
+  <em>Unicode</em> cmap, and in practice they all converge on the Windows-platform <code>(3,10)</code>
+  table. "Windows" here effectively means "the standard everyone uses".</p>
 
   <h3>Subtable formats</h3>
   <table>
@@ -84,9 +118,21 @@
   <p>The two that matter most today are <strong>format 4</strong> (the workhorse for the Basic
   Multilingual Plane — the first 65,536 codepoints) and <strong>format 12</strong> (which extends the
   same segmented idea to the full 32-bit space, so it can reach the supplementary planes above
-  <code>U+FFFF</code>). Format 0 and format 6 are narrow legacy encodings you'll see in older or
-  Mac-targeted fonts; format 14 doesn't map characters at all — it handles "use <em>this</em> variant of
-  that character" sequences.</p>
+  <code>U+FFFF</code>). Format 0 and 6 are narrow legacy encodings; format 14 doesn't map characters at
+  all — it handles "use <em>this</em> variant of that character" sequences.</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.3</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Read a subtable label.</strong> A subtable declares
+    <code>(platformID=3, encodingID=10, format=12)</code>. State who it is for and what codepoint range
+    it can address.</p>
+    <details><summary>Show solution</summary>
+      platformID 3 = <strong>Windows</strong>; encodingID 10 = full Unicode. Format 12 is the
+      <strong>segmented 32-bit</strong> format, so it can map the entire Unicode space —
+      <code>U+0000</code> through <code>U+10FFFF</code>, all 17 planes — not just the 16-bit BMP. In this
+      font that subtable maps 46510 codepoints.
+    </details>
+  </div>
 
   <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
   <span class="section-tag walk">walkthrough</span>
@@ -108,11 +154,11 @@
   <ul>
     <li><strong>(0,3) format 4</strong> and <strong>(3,1) format 4</strong> both map
       <strong>43498</strong> codepoints — every character this font has that lives in the BMP
-      (<code>U+0000…U+FFFF</code>). One is labelled for the Unicode platform, one for Windows; the data
-      is the same.</li>
+      (<code>U+0000…U+FFFF</code>). One is labelled for the Unicode platform, one for Windows — and, as
+      we'll see in the deep-dive, they literally point at the <em>same bytes</em>.</li>
     <li><strong>(0,4) format 12</strong> and <strong>(3,10) format 12</strong> both map
       <strong>46510</strong> codepoints — the BMP characters <em>plus</em> everything beyond
-      <code>U+FFFF</code>.</li>
+      <code>U+FFFF</code> (again, the same shared bytes under two labels).</li>
     <li><strong>(0,5) format 14</strong> maps <strong>0</strong>: the variation-sequence subtable is
       present but carries no sequences. It's a structural placeholder.</li>
   </ul>
@@ -127,60 +173,132 @@
     glyphs, like <code>.notdef</code> and shaping-only alternates, have no codepoint pointing at them.)
   </div>
 
-  <h3>Why duplicate the same mapping across two platforms?</h3>
-  <p>The <code>(0,·)</code> rows and the <code>(3,·)</code> rows carry the same content. This is
-  redundancy on purpose: a macOS text stack (CoreText) historically looked for a Unicode-platform
-  subtable, while Windows (DirectWrite/GDI) looked for a <code>(3,1)</code>/<code>(3,10)</code> Windows
-  subtable. By shipping both labels, the font maps correctly on either OS without the renderer having to
-  guess. The cost is a little extra space; the benefit is portability.</p>
-
   <h3>Sample mappings</h3>
-  <p>What the best Unicode subtable actually resolves to (the glyph <em>names</em> here come from the
-  <code>post</code> table, shown only for human readability — see the callout below):</p>
+  <p>What the best Unicode subtable resolves to (the glyph <em>names</em> come from the <code>post</code>
+  table, shown only for human readability):</p>
   <table class="mono">
-    <tr><th>codepoint</th><th>char</th><th>glyph name</th></tr>
-    <tr><td>U+0041</td><td>A</td><td>"A"</td></tr>
-    <tr><td>U+4E00</td><td>一</td><td>"u4E00"</td></tr>
-    <tr><td>U+6C38</td><td>永</td><td>"u6C38"</td></tr>
-    <tr><td>U+9FA5</td><td>龥</td><td>"u9FA5" &nbsp;(last char of the CJK Unified base block)</td></tr>
+    <tr><th>codepoint</th><th>char</th><th>glyph name</th><th>GID</th></tr>
+    <tr><td>U+0041</td><td>A</td><td>"A"</td><td>1</td></tr>
+    <tr><td>U+4E00</td><td>一</td><td>"u4E00"</td><td>3171</td></tr>
+    <tr><td>U+6C38</td><td>永</td><td>"u6C38"</td><td>—</td></tr>
+    <tr><td>U+9FA5</td><td>龥</td><td>"u9FA5" (last of CJK Unified base)</td><td>—</td></tr>
   </table>
 
   <div class="callout">
     <span class="label">Names are a convenience, IDs are the reality</span>
-    A renderer never works with the string <code>"u4E00"</code>. The <code>cmap</code> returns a glyph
-    <em>ID</em> (an integer); the human-readable name <code>"u4E00"</code> lives in the <code>post</code>
-    table purely so tools and people can talk about glyphs. fontTools' <code>getBestCmap()</code> hides
-    one more step: it auto-selects the best available Unicode subtable — here the format-12 one, because
-    it covers the most codepoints — and hands you a plain <code>{codepoint: glyphName}</code> dict.
+    A renderer never works with the string <code>"u4E00"</code>; <code>cmap</code> returns a glyph
+    <em>ID</em>. The name lives in the <code>post</code> table purely so tools and people can talk about
+    glyphs. fontTools' <code>getBestCmap()</code> auto-selects the best Unicode subtable (here the
+    format-12 one) and hands you a plain <code>{codepoint: glyphName}</code> dict.
   </div>
 
-  <div class="callout proof">
-    <span class="label">See it for yourself</span>
-    <code>specimens/extract.py LXGWWenKaiMonoGB-Regular.ttf</code> prints the subtable list and sample
-    mappings. With fontTools: <code>TTFont(path)["cmap"].tables</code> gives the five raw subtables,
-    each with <code>.platformID</code>, <code>.platEncID</code>, <code>.format</code>, and a
-    <code>.cmap</code> dict.
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.4</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Why both formats?</strong> This font ships a format-4 subtable (43498 mappings) and a
+    format-12 subtable (46510 mappings) that look largely redundant. Why keep both? Concretely, what
+    would break if you deleted the format-12 subtables and kept only format 4?</p>
+    <details><summary>Show solution</summary>
+      Format 4 uses 16-bit codepoints, so it can only address the BMP (<code>≤ U+FFFF</code>). The
+      <strong>46510 − 43498 = 3012</strong> characters above <code>U+FFFF</code> — supplementary planes,
+      e.g. CJK Extension B at <code>U+20000+</code> — would have no mapping. Asking for one would return
+      <code>.notdef</code>, rendering as a <strong>tofu box</strong> even though the glyph is sitting in
+      the font. The format-12 subtable is what makes those glyphs reachable.
+    </details>
   </div>
 
-  <div class="callout">
-    <span class="label">.notdef and tofu</span>
-    Glyph ID <code>0</code> is reserved as <code>.notdef</code> in every sfnt font. When a renderer asks
-    <code>cmap</code> for a codepoint the font does not contain, it gets back GID 0 (or no entry, which it
-    treats as GID 0) and draws <code>.notdef</code> — typically the empty rectangle people call a
-    <em>tofu</em> box. Seeing tofu means "this font has no glyph for that character", not "the text is
-    broken".
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.5</span><span class="x-kind code">programming</span></div>
+    <p><strong>Count what only format 12 can reach.</strong> Count how many codepoints appear in a
+    format-12 subtable but <em>not</em> in a format-4 subtable — i.e. the codepoints with
+    <code>cp &gt; 0xFFFF</code>. Compare to the difference of the <code>nMappings</code> values above.</p>
+    <details><summary>Hint</summary>
+      Grab the raw subtables from <code>font["cmap"].tables</code>. Pick one with <code>.format == 4</code>
+      and one with <code>.format == 12</code>; each has a <code>.cmap</code> dict keyed by codepoint. Then
+      a set difference: <code>len(set(fmt12.cmap) - set(fmt4.cmap))</code>. Expected ≈ 46510 − 43498.
+    </details>
+    <p class="check-note">Paste your count and the one-liner — I'll confirm it equals 3012.</p>
   </div>
 
-  <!-- ───────────────────────── BINARY DEEP-DIVE ───────────────────────── -->
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.6</span><span class="x-kind code">programming</span></div>
+    <p><strong>Map codepoints to glyph names.</strong> Load the font with fontTools, call
+    <code>getBestCmap()</code>, and print the glyph name for <code>A</code> (U+0041), <code>一</code>
+    (U+4E00), and a supplementary-plane character such as <code>𠀀</code> (U+20000). Print the codepoint,
+    the character, and the resolved name. Which subtable did <code>getBestCmap()</code> pick, and how can
+    you tell?</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      <code>getBestCmap()</code> returns a plain <code>{codepoint: glyphName}</code> dict, so each lookup
+      is <code>cmap.get(cp)</code>. If the U+20000 lookup returns a name (not <code>None</code>), you got
+      the 32-bit format-12 mapping; confirm with
+      <code>[(t.platformID,t.platEncID,t.format) for t in font["cmap"].tables]</code>.
+    </details>
+    <p class="check-note">Paste your code and output — I'll verify against the real file.</p>
+  </div>
+
+  <!-- ───────────────────────── DEEP-DIVE A: the cmap index ───────────────────────── -->
   <span class="section-tag binary">binary deep-dive</span>
-  <h2>Hand-parsing the bytes: format 4</h2>
+  <h2>First: cmap is itself a container</h2>
 
-  <p>Knowing the model isn't the same as having decoded it. Let's parse the real
-  <code>(3,1)</code> format-4 subtable of WenKai straight from its bytes — once by hand, so the next
-  time you see it you <em>recognize</em> it. The subtable starts with a 14-byte header; here are its
-  genuine first bytes (big-endian, as always):</p>
+  <p>Before any format-4 bytes, you have to <em>find</em> them. From Module 1's table directory we know
+  the <code>cmap</code> table sits at file offset <strong>187808</strong>. But the table doesn't start
+  with subtable data — it starts with its <strong>own little directory</strong>: a 4-byte header
+  (<code>version</code>, <code>numTables</code>) followed by one 8-byte <strong>encoding record</strong>
+  per subtable: <code>(platformID, encodingID, offset)</code>, where <code>offset</code> is measured
+  <em>from the start of the cmap table</em>. It's the Module-1 pattern again, nested one level deeper.</p>
 
-<pre class="bytemap"><span class="b f0">00 04</span> <span class="b f1">c3 c0</span> <span class="b f2">00 00</span> <span class="b f3">0b f8</span> <span class="b f4">08 00</span> <span class="b f0">00 0a</span> <span class="b f1">03 f8</span>   <span style="opacity:.55">00 2f 00 39 00 7e 00 ac …</span></pre>
+  <p>Here are the genuine first 44 bytes <em>of the cmap table</em> (header + the five records):</p>
+<pre class="bytemap"><span class="b f0">00 00</span> <span class="b f1">00 05</span>   <span class="b f2">00 00 00 03</span> <span class="b f3">00 00 00 2c</span>   <span class="b f2">00 00 00 04</span> <span class="b f3">00 00 c3 ec</span>   <span class="b f2">00 00 00 05</span> <span class="b f3">00 03 4f f8</span>   <span class="b f2">00 03 00 01</span> <span class="b f3">00 00 00 2c</span>   <span class="b f2">00 03 00 0a</span> <span class="b f3">00 00 c3 ec</span></pre>
+
+  <table>
+    <tr><th class="mono">bytes</th><th>field</th><th>value</th></tr>
+    <tr><td class="mono">00 00</td><td>version</td><td class="mono">0</td></tr>
+    <tr><td class="mono">00 05</td><td>numTables</td><td class="mono">5 encoding records follow</td></tr>
+  </table>
+  <table class="mono">
+    <tr><th>record bytes</th><th>(plat, enc)</th><th>offset</th><th>→ subtable format</th></tr>
+    <tr><td>00 00 00 03 · 00 00 00 2c</td><td>(0, 3)</td><td>44</td><td>format 4</td></tr>
+    <tr><td>00 00 00 04 · 00 00 c3 ec</td><td>(0, 4)</td><td>50156</td><td>format 12</td></tr>
+    <tr><td>00 00 00 05 · 00 03 4f f8</td><td>(0, 5)</td><td>217080</td><td>format 14</td></tr>
+    <tr><td>00 03 00 01 · 00 00 00 2c</td><td>(3, 1)</td><td><strong>44</strong></td><td>format 4 (same offset!)</td></tr>
+    <tr><td>00 03 00 0a · 00 00 c3 ec</td><td>(3, 10)</td><td><strong>50156</strong></td><td>format 12 (same offset!)</td></tr>
+  </table>
+
+  <div class="callout key">
+    <span class="label">Two ways to read this, both important</span>
+    <strong>(1) Navigation:</strong> to reach the format-4 bytes, take the cmap table offset
+    <code>187808</code> + the record's <code>offset 44</code> = file offset <strong>187852</strong>. That's
+    the <em>only</em> way to know where the subtable lives — there's no fixed position. <br>
+    <strong>(2) Offset-sharing:</strong> records <code>(0,3)</code> and <code>(3,1)</code> both carry
+    <code>offset = 44</code>; <code>(0,4)</code> and <code>(3,10)</code> both carry <code>50156</code>. The
+    "duplicate platform" subtables from the walkthrough aren't duplicated data — they're <em>one</em>
+    subtable referenced by two records. Same trick the TTC uses in Module 7.
+  </div>
+
+  <p>And sure enough, the 14 bytes at offset 44 are the format-4 header we're about to dissect:</p>
+<pre class="bytemap"><span style="opacity:.55">…@ offset 44:</span> <span class="b f0">00 04</span> <span class="b f1">c3 c0</span> <span class="b f2">00 00</span> <span class="b f3">0b f8</span> <span class="b f4">08 00</span> <span class="b f0">00 0a</span> <span class="b f1">03 f8</span></pre>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.7</span><span class="x-kind code">programming</span></div>
+    <p><strong>Parse the cmap index from raw bytes.</strong> Using the file offset 187808 (from Module 1),
+    read the cmap table's <code>version</code> and <code>numTables</code>, then the encoding records.
+    Print each <code>(platformID, encodingID, offset)</code>. <strong>Which records share an offset?</strong>
+    Then compute the file offset of the <code>(3,1)</code> subtable and confirm its first two bytes decode
+    to format <code>4</code>.</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      Read the file in binary. The cmap header is two big-endian <code>uint16</code>s
+      (<code>"&gt;HH"</code>); each record is <code>uint16, uint16, uint32</code> (<code>"&gt;HHI"</code>, 8
+      bytes). Record offsets are relative to the cmap table start, so the subtable's file offset is
+      <code>187808 + recordOffset</code>. Read 2 bytes there and unpack a <code>uint16</code> for the
+      format. (You can get 187808 yourself from a Module-1 style parse, or from
+      <code>TTFont(path).reader.tables['cmap'].offset</code>.)
+    </details>
+    <p class="check-note">Paste your records list + the (3,1) subtable's file offset and format — I'll check.</p>
+  </div>
+
+  <!-- ───────────────────────── DEEP-DIVE B: format 4 ───────────────────────── -->
+  <h2>Hand-parsing format 4</h2>
+
+  <p>Now we can decode the subtable at offset 44. Its 14-byte header:</p>
 
   <table>
     <tr><th class="mono">bytes</th><th>field</th><th>value</th><th>meaning</th></tr>
@@ -197,8 +315,7 @@
     <span class="label">There they are again</span>
     The <code>searchRange / entrySelector / rangeShift</code> fossil you dismantled in Module 1 is
     <em>baked into every format-4 subtable</em> — this time to binary-search the <code>endCode</code>
-    array for the segment containing a codepoint. Same trick, same fields, different array. Recognizing
-    it cost you nothing here because you'd already met it.
+    array for the segment containing a codepoint. Same trick, same fields, different array.
   </div>
 
   <h3>The four parallel arrays</h3>
@@ -271,6 +388,23 @@ glyphIdArray @ 12318 = 1 ,  + idDelta(0)         = gid 1   → glyph "A"  ✓
     since — which is exactly why the next format threw it out.
   </div>
 
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.8</span><span class="x-kind code">programming</span></div>
+    <p><strong>Hand-parse a codepoint through format 4 — no <code>.cmap</code> shortcut.</strong> Get the
+    raw bytes of a format-4 subtable, parse the header and the four arrays yourself with
+    <code>struct</code>, then resolve a character of your choice (try <code>永</code> U+6C38, or a digit
+    for the easy path) all the way to a glyph id by applying the <code>idRangeOffset==0</code> /
+    <code>!=0</code> rule. Verify against <code>getBestCmap()</code> (or <code>getGlyphID</code>).</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      A subtable can serialize itself: <code>raw = subtable.compile(font)</code> gives the exact bytes.
+      The header is seven big-endian <code>uint16</code>s (<code>"&gt;7H"</code>); the four arrays follow
+      in order, each <code>segCount</code> entries — but <code>idDelta</code> is <strong>signed</strong>
+      (<code>"&gt;…h"</code>), and remember the 2-byte <code>reservedPad</code> after <code>endCode</code>.
+      For the pointer path, the offset is measured from the address of <code>idRangeOffset[i]</code> itself.
+    </details>
+    <p class="check-note">Paste your parser and the glyph id it produces — I'll check the arithmetic and cross-check.</p>
+  </div>
+
   <h2>Format 12: the sane redesign</h2>
   <p>Format 12 covers the full 32-bit space and is dramatically simpler. Its header is 16 bytes, then a
   flat list of 12-byte <strong>groups</strong>:</p>
@@ -310,23 +444,23 @@ gid = 3105 + (0x4E00 − 0x4DBE) = 3105 + 66 = 3171   → "u4E00"</code></pre>
 <span class="kw">help</span>(obj.some_method)                       <span class="cmt"># what does that do?</span></code></pre>
 
   <p>Run that on <code>font['cmap']</code> and you discover it's a <code>table__c_m_a_p</code> whose
-  public surface — the answer to your "what else besides <code>.tables</code>?" — is:</p>
+  public surface — the answer to "what else besides <code>.tables</code>?" — is:</p>
   <table>
     <tr><th class="mono">on font['cmap']</th><th>returns / does</th></tr>
     <tr><td class="mono">.tables</td><td>list of the raw subtable objects</td></tr>
     <tr><td class="mono">.getBestCmap()</td><td>auto-pick best Unicode subtable → <code>{codepoint: glyphName}</code> dict</td></tr>
     <tr><td class="mono">.getcmap(plat, enc)</td><td>fetch one specific subtable by <code>(platformID, platEncID)</code></td></tr>
     <tr><td class="mono">.buildReversed()</td><td>invert it → <code>{glyphName: {codepoints}}</code> (e.g. <code>{'space': {32}}</code>)</td></tr>
-    <tr><td class="mono">.compile(font)</td><td>serialize back to <strong>bytes</strong> — the very bytes we hand-parsed above</td></tr>
+    <tr><td class="mono">.compile(font)</td><td>serialize back to <strong>bytes</strong> — the very bytes we hand-parsed</td></tr>
     <tr><td class="mono">.toXML() / decompile()</td><td>the TTX text form / parse from bytes</td></tr>
   </table>
 
   <p>And one subtable (a <code>cmap_format_4</code>) exposes:
-  <code>.cmap</code> (the <code>{codepoint: glyphName}</code> dict), <code>.format</code>,
-  <code>.platformID</code>, <code>.platEncID</code>, <code>.language</code>, <code>.length</code>,
-  <code>.isUnicode()</code>, <code>.isSymbol()</code>, <code>.getEncoding()</code>,
-  <code>.compile()</code>, <code>.toXML()</code>. So <code>.compile(font)</code> is your door from the
-  tidy Python object down to the raw bytes — that's exactly how the deep-dive above got its data.</p>
+  <code>.cmap</code> (the dict), <code>.format</code>, <code>.platformID</code>, <code>.platEncID</code>,
+  <code>.language</code>, <code>.length</code>, <code>.isUnicode()</code>, <code>.isSymbol()</code>,
+  <code>.getEncoding()</code>, <code>.compile()</code>, <code>.toXML()</code>. So
+  <code>.compile(font)</code> is your door from the tidy Python object down to the raw bytes — exactly
+  how the deep-dive above got its data.</p>
 
   <h3>Command-line tools worth knowing</h3>
   <table>
@@ -341,138 +475,17 @@ gid = 3105 + (0x4E00 − 0x4DBE) = 3105 + 66 = 3171   → "u4E00"</code></pre>
     <span class="label">The habit to build</span>
     When a walkthrough hands you <code>font['cmap'].tables</code>, don't just accept it — run
     <code>dir()</code> on it and on one element, and skim <code>help()</code> for anything new. Five
-    minutes of poking teaches the object model better than any reference, and it's the muscle that lets
-    you "quickly look up and recall later".
-  </div>
-
-  <!-- ───────────────────────── EXERCISES ───────────────────────── -->
-  <span class="section-tag ex">exercises</span>
-  <h2>Exercises</h2>
-  <p class="legend">Attempt each, then paste your answer/output to your tutor to check.
-  Hints &amp; self-check solutions are collapsible.</p>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">2.1</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Read a subtable label.</strong> A subtable declares
-    <code>(platformID=3, encodingID=10, format=12)</code>. State who it is for and what codepoint range
-    it can address.</p>
-    <details><summary>Show solution</summary>
-      platformID 3 = <strong>Windows</strong>; encodingID 10 = full Unicode. Format 12 is the
-      <strong>segmented 32-bit</strong> format, so it can map the entire Unicode space —
-      <code>U+0000</code> through <code>U+10FFFF</code>, all 17 planes — not just the 16-bit BMP. In this
-      font that subtable maps 46510 codepoints.
-    </details>
+    minutes of poking teaches the object model better than any reference.
   </div>
 
   <div class="exercise">
-    <div class="x-head"><span class="x-id">2.2</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Why both formats?</strong> This font ships a format-4 subtable (43498 mappings) and a
-    format-12 subtable (46510 mappings) that look largely redundant. Why keep both? Concretely, what
-    would break if you deleted the format-12 subtables and kept only format 4?</p>
-    <details><summary>Show solution</summary>
-      Format 4 uses 16-bit codepoints, so it can only address the BMP (<code>≤ U+FFFF</code>). The
-      <strong>46510 − 43498 = 3012</strong> characters this font supports above <code>U+FFFF</code> —
-      supplementary planes, e.g. CJK Extension B at <code>U+20000+</code> — would simply have no
-      mapping. Asking for one of those codepoints would return <code>.notdef</code>, so it would render
-      as a <strong>tofu box</strong> even though the glyph data is sitting right there in the font. The
-      format-12 subtable is what makes those glyphs reachable.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">2.3</span><span class="x-kind code">programming</span></div>
-    <p><strong>Map codepoints to glyph names.</strong> Using <code>~/.venv/bin/python</code> and
-    fontTools, load the font, call <code>getBestCmap()</code>, and print the glyph name for a handful of
-    codepoints — at least <code>A</code> (U+0041), <code>一</code> (U+4E00), and a supplementary-plane
-    character such as <code>𠀀</code> (U+20000, CJK Ext-B). For each codepoint, print the codepoint, the
-    character itself, and the glyph name the cmap resolves it to.</p>
-    <p>Which subtable did <code>getBestCmap()</code> pick, and how can you tell? (Hint: the U+20000
-    lookup only succeeds because the chosen subtable is 32-bit.)</p>
-    <details><summary>Stuck? a nudge (no full solution)</summary>
-      Open the font with <code>TTFont(path)</code> and call <code>getBestCmap()</code> — it returns a
-      plain <code>{codepoint: glyphName}</code> dict, so each lookup is just <code>cmap.get(cp)</code>.
-      Iterate over your list of codepoints and format each line yourself.
-    </details>
-    <details><summary>Hint</summary>
-      <code>getBestCmap()</code> prefers the widest-coverage Unicode subtable. If the U+20000 lookup
-      returns a name rather than <code>None</code>, you were handed the format-12 mapping. You can
-      confirm by inspecting <code>[(t.platformID, t.platEncID, t.format) for t in font["cmap"].tables]</code>.
-    </details>
-    <p class="check-note">Paste your code and its output — I'll verify it against the real file.</p>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">2.4</span><span class="x-kind code">programming</span></div>
-    <p><strong>Count what only format 12 can reach.</strong> Count how many codepoints appear in a
-    format-12 subtable but <em>not</em> in a format-4 subtable — i.e. the codepoints with
-    <code>cp &gt; 0xFFFF</code>. Compare your number to the difference of the <code>nMappings</code> values
-    in the walkthrough table.</p>
-    <details><summary>Hint</summary>
-      Grab the raw subtables from <code>font["cmap"].tables</code>. Pick one whose <code>.format == 4</code>
-      and one whose <code>.format == 12</code>; each has a <code>.cmap</code> dict keyed by codepoint.
-      Then it's a set difference: <code>len(set(fmt12.cmap) - set(fmt4.cmap))</code>, or simply count
-      <code>cp</code> in the format-12 dict where <code>cp &gt; 0xFFFF</code>. Expected ≈ 46510 − 43498.
-    </details>
-    <p class="check-note">Paste your count and the one-liner you used — I'll confirm it equals 3012.</p>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">2.5</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Where cmap stops and shaping starts.</strong> Consider the single precomposed character
-    <code>ﬁ</code> (<code>U+FB01</code>, the "fi" ligature) versus typing the two characters
-    <code>f</code> + <code>i</code>. Which one is resolved by <code>cmap</code>, and which one needs the
-    shaping engine? Explain the boundary.</p>
-    <details><summary>Show solution</summary>
-      <code>U+FB01</code> is a real codepoint, so <code>cmap</code> maps it directly to the single fi
-      ligature glyph — one lookup, done. Typing <code>f</code> then <code>i</code> gives
-      <em>two</em> codepoints (<code>U+0066</code>, <code>U+0069</code>); <code>cmap</code> maps each to
-      its own glyph independently, because <code>cmap</code> has no notion of "these two are adjacent".
-      Fusing them into one ligature glyph is a <strong>contextual</strong> decision, which is the job of
-      <code>GSUB</code> (the <code>liga</code> feature) in the shaping stage. That is the boundary:
-      <code>cmap</code> = context-free character→glyph; shaping = context-dependent glyph→glyph(s). We
-      cover this in <strong>Module 6</strong>.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">2.6</span><span class="x-kind concept">concept</span></div>
-    <p><strong>The special glyph.</strong> Why is glyph ID <code>0</code> special, and what appears on
-    screen when a codepoint has no <code>cmap</code> entry?</p>
-    <details><summary>Show solution</summary>
-      Glyph ID 0 is reserved in every sfnt font as <code>.notdef</code> — the designated "missing glyph".
-      When you request a codepoint the font does not map, the lookup yields GID 0 (or no entry, treated
-      as GID 0), so the renderer draws <code>.notdef</code>: usually an empty or crossed rectangle, the
-      <strong>tofu</strong> box. It signals "this font has no glyph for that character" — the text and
-      the encoding are fine; coverage is what's missing.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">2.7</span><span class="x-kind code">programming</span></div>
-    <p><strong>Hand-parse a codepoint through format 4 — no <code>.cmap</code> shortcut.</strong> Get the
-    raw bytes of a format-4 subtable, parse the header and the four arrays yourself with
-    <code>struct</code>, then resolve a character of your choice (try <code>永</code> U+6C38, or a digit
-    for the easy path) all the way to a glyph id by applying the <code>idRangeOffset==0</code> /
-    <code>!=0</code> rule. Verify your answer against <code>getBestCmap()</code> (or
-    <code>getGlyphID</code>).</p>
-    <details><summary>Stuck? a nudge (no full solution)</summary>
-      A subtable can serialize itself: <code>raw = subtable.compile(font)</code> gives you the exact
-      bytes. The header is seven big-endian <code>uint16</code>s (<code>"&gt;7H"</code>); the four arrays
-      follow in order, each <code>segCount</code> entries — but <code>idDelta</code> is <strong>signed</strong>
-      (<code>"&gt;…h"</code>), and remember the 2-byte <code>reservedPad</code> after <code>endCode</code>.
-      For the pointer path, the offset is measured from the address of <code>idRangeOffset[i]</code> itself.
-    </details>
-    <p class="check-note">Paste your parser and the glyph id it produces — I'll check the arithmetic and the cross-check.</p>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">2.8</span><span class="x-kind code">programming</span></div>
+    <div class="x-head"><span class="x-id">2.9</span><span class="x-kind code">programming</span></div>
     <p><strong>Interrogate the object model.</strong> Without reading the docs, use the three-line recipe
     (<code>type</code> / <code>dir</code> / <code>help</code>) to discover the API of
     <code>font['cmap']</code> and of one of its subtables. Report <strong>three methods you hadn't used
-    before</strong> and, in one line each, what they return. Then actually call two of them — e.g.
-    <code>buildReversed()</code> and <code>getcmap(3, 1)</code> — and show a snippet of the output.
-    Bonus: run <code>ttx -t cmap</code> on the font and skim the XML.</p>
+    before</strong> and, in one line each, what they return. Then actually call two — e.g.
+    <code>buildReversed()</code> and <code>getcmap(3, 1)</code> — and show a snippet of output. Bonus:
+    run <code>ttx -t cmap</code> on the font and skim the XML.</p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
       <code>[a for a in dir(font['cmap']) if not a.startswith('_')]</code> lists the public surface;
       <code>help(font['cmap'].buildReversed)</code> explains one. A subtable is
