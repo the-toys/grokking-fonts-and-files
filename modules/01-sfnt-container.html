@@ -154,6 +154,25 @@ rangeShift    = 17×16 − 256          = 16    ✓</code></pre>
     ones because CJK text can be set top-to-bottom.
   </div>
 
+  <h3>What's <em>inside</em> each table — and where you'll learn it</h3>
+  <p>This module is about the <strong>container</strong>: how tables are indexed and laid out, not what
+  lives inside them. Each table's contents get dissected in its own module — so when a later page says
+  "names live in <code>name</code>", that's a promise, not an assumption. The map:</p>
+  <table>
+    <tr><th>table(s)</th><th>holds</th><th>module</th></tr>
+    <tr><td class="mono">cmap</td><td>character code → glyph ID</td><td>2</td></tr>
+    <tr><td class="mono">glyf, loca</td><td>glyph outlines + their index</td><td>3</td></tr>
+    <tr><td class="mono">hmtx, hhea, vmtx, vhea</td><td>advance widths &amp; line metrics (horizontal + vertical)</td><td>4</td></tr>
+    <tr><td class="mono">head</td><td>units-per-em &amp; bbox (Mod 4); bold/italic <code>macStyle</code> flags (Mod 5)</td><td>4 · 5</td></tr>
+    <tr><td class="mono">name</td><td>human &amp; family name strings</td><td>5</td></tr>
+    <tr><td class="mono">OS/2</td><td>weight, style bits, PANOSE, width class</td><td>5</td></tr>
+    <tr><td class="mono">post</td><td>glyph names &amp; the <code>isFixedPitch</code> flag</td><td>5 (touched)</td></tr>
+    <tr><td class="mono">GSUB, GPOS</td><td>glyph substitution &amp; positioning</td><td>6</td></tr>
+    <tr><td class="mono">maxp</td><td>glyph count &amp; size limits</td><td>used in 3</td></tr>
+    <tr><td class="mono">prep, gasp</td><td>hinting / grid-fit &amp; anti-alias control</td><td>3 (brief)</td></tr>
+    <tr><td class="mono">meta</td><td>misc metadata (e.g. design/supported script tags)</td><td>not covered — niche</td></tr>
+  </table>
+
   <!-- ───────────────────────── EXERCISES ───────────────────────── -->
   <span class="section-tag ex">exercises</span>
   <h2>Exercises</h2>
@@ -240,10 +259,12 @@ rangeShift    = 17×16 − 256          = 16    ✓</code></pre>
     <details><summary>Show solution</summary>
       (a) It reads the 12-byte header + directory, finds the <code>cmap</code> record, and seeks
       straight to offset 187808 — random access means it never touches <code>glyf</code> at 592352.
-      (b) Names live entirely in the <code>name</code>/<code>OS/2</code>/<code>head</code> tables;
-      outlines live in <code>glyf</code>. Tables are independent blobs, so you rewrite the small
-      metadata tables and leave the giant outline table byte-for-byte identical — which is exactly
-      why the hybrid <code>.ttc</code> can re-label fonts almost for free.
+      (b) A font's identity lives in small metadata tables — its <em>names</em> in <code>name</code>,
+      its <em>weight/style</em> in <code>OS/2</code> and <code>head</code>'s <code>macStyle</code> flags
+      — while the outlines live in <code>glyf</code>. (You'll dissect those metadata tables in
+      Module 5.) Tables are independent blobs, so you rewrite the small metadata tables and leave the
+      giant outline table byte-for-byte identical — which is exactly why the hybrid <code>.ttc</code>
+      can re-label fonts almost for free.
     </details>
   </div>
 
