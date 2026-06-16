@@ -171,6 +171,180 @@
     broken".
   </div>
 
+  <!-- ───────────────────────── BINARY DEEP-DIVE ───────────────────────── -->
+  <span class="section-tag binary">binary deep-dive</span>
+  <h2>Hand-parsing the bytes: format 4</h2>
+
+  <p>Knowing the model isn't the same as having decoded it. Let's parse the real
+  <code>(3,1)</code> format-4 subtable of WenKai straight from its bytes — once by hand, so the next
+  time you see it you <em>recognize</em> it. The subtable starts with a 14-byte header; here are its
+  genuine first bytes (big-endian, as always):</p>
+
+<pre class="bytemap"><span class="b f0">00 04</span> <span class="b f1">c3 c0</span> <span class="b f2">00 00</span> <span class="b f3">0b f8</span> <span class="b f4">08 00</span> <span class="b f0">00 0a</span> <span class="b f1">03 f8</span>   <span style="opacity:.55">00 2f 00 39 00 7e 00 ac …</span></pre>
+
+  <table>
+    <tr><th class="mono">bytes</th><th>field</th><th>value</th><th>meaning</th></tr>
+    <tr><td class="mono">00 04</td><td>format</td><td class="mono">4</td><td>segmented 16-bit mapping</td></tr>
+    <tr><td class="mono">c3 c0</td><td>length</td><td class="mono">50112</td><td>byte length of this whole subtable</td></tr>
+    <tr><td class="mono">00 00</td><td>language</td><td class="mono">0</td><td>0 = not language-specific</td></tr>
+    <tr><td class="mono">0b f8</td><td>segCountX2</td><td class="mono">3064</td><td>→ <strong>segCount = 1532</strong> segments</td></tr>
+    <tr><td class="mono">08 00</td><td>searchRange</td><td class="mono">2048</td><td rowspan="3">the same binary-search trio from Module 1 — here over the <code>endCode</code> array. segCount 1532 → 2¹⁰=1024 → ×2=2048; log₂1024=10; 2·1532−2048=1016.</td></tr>
+    <tr><td class="mono">00 0a</td><td>entrySelector</td><td class="mono">10</td></tr>
+    <tr><td class="mono">03 f8</td><td>rangeShift</td><td class="mono">1016</td></tr>
+  </table>
+
+  <div class="callout key">
+    <span class="label">There they are again</span>
+    The <code>searchRange / entrySelector / rangeShift</code> fossil you dismantled in Module 1 is
+    <em>baked into every format-4 subtable</em> — this time to binary-search the <code>endCode</code>
+    array for the segment containing a codepoint. Same trick, same fields, different array. Recognizing
+    it cost you nothing here because you'd already met it.
+  </div>
+
+  <h3>The four parallel arrays</h3>
+  <p>After the 14-byte header, format 4 stores <strong>four arrays of <code>segCount</code> entries
+  each</strong> (plus a glyph-index array at the end), laid out back to back:</p>
+<pre><code>header(14)
+endCode[1532]        uint16  — last codepoint of each segment (sorted; last entry = 0xFFFF)
+reservedPad(2)       = 0
+startCode[1532]      uint16  — first codepoint of each segment
+idDelta[1532]        int16   — SIGNED add-constant for the segment
+idRangeOffset[1532]  uint16  — 0, or a byte-offset into glyphIdArray (the tricky bit)
+glyphIdArray[...]    uint16  — shared pool the idRangeOffsets point into</code></pre>
+
+  <p>The first six real segments of this font (a segment is one row across all four arrays):</p>
+  <table class="mono">
+    <tr><th>seg</th><th>startCode</th><th>endCode</th><th>idDelta</th><th>idRangeOffset</th><th>covers</th></tr>
+    <tr><td>0</td><td>0x0020</td><td>0x002f</td><td>0</td><td>3064</td><td>space … '/'</td></tr>
+    <tr><td>1</td><td>0x0030</td><td>0x0039</td><td>210</td><td>0</td><td>digits 0–9</td></tr>
+    <tr><td>2</td><td>0x003a</td><td>0x007e</td><td>0</td><td>3092</td><td>':' … '~' (incl. A–Z, a–z)</td></tr>
+    <tr><td>3</td><td>0x00a0</td><td>0x00ac</td><td>0</td><td>3228</td><td>Latin-1 punctuation</td></tr>
+    <tr><td>4</td><td>0x00ae</td><td>0x02b0</td><td>0</td><td>3252</td><td>Latin extended …</td></tr>
+    <tr><td>5</td><td>0x02b2</td><td>0x02b3</td><td>0</td><td>4280</td><td>modifier letters</td></tr>
+    <tr><td>…</td><td>…</td><td>…</td><td>…</td><td>…</td><td></td></tr>
+    <tr><td>1531</td><td>0xffff</td><td>0xffff</td><td>—</td><td>—</td><td>required 0xFFFF sentinel</td></tr>
+  </table>
+  <p>Every format-4 subtable <strong>must</strong> end with a segment whose <code>endCode</code> is
+  <code>0xFFFF</code> — the sentinel that guarantees the "find first <code>endCode ≥ c</code>" search
+  always terminates.</p>
+
+  <h3>The lookup algorithm</h3>
+  <ol class="steps">
+    <li>Binary-search <code>endCode</code> for the first segment <code>i</code> with
+      <code>endCode[i] ≥ c</code>. (This is where the trio earns its keep.)</li>
+    <li>If <code>c &lt; startCode[i]</code>, the codepoint falls in a gap → <strong>glyph 0 (.notdef)</strong>.</li>
+    <li>If <code>idRangeOffset[i] == 0</code> (the easy path):
+      <code>gid = (c + idDelta[i]) &amp; 0xFFFF</code>. The whole segment is one contiguous glyph run.</li>
+    <li>Else (the pointer path): the glyph id lives in <code>glyphIdArray</code>, and
+      <code>idRangeOffset[i]</code> is a <strong>byte offset measured from its own slot</strong> into that
+      array. Then add <code>idDelta</code>.</li>
+  </ol>
+
+  <h3>Two worked lookups (both verified)</h3>
+
+  <p><strong>Easy path — <code>一</code> (U+4E00).</strong> It lands in a segment with
+  <code>idDelta = −16797</code>, <code>idRangeOffset = 0</code>:</p>
+<pre><code>gid = (0x4E00 + (−16797)) &amp; 0xFFFF
+    = (19968 − 16797) &amp; 0xFFFF
+    = 3171                       → glyph "u4E00"  ✓</code></pre>
+  <p>(Digits work the same way: <code>'0'</code> U+0030 in segment 1 →
+  <code>(48 + 210) = 258</code>.) The signed <code>idDelta</code> is just "this run of codepoints maps
+  to a run of glyph ids shifted by a constant" — cheap and dense.</p>
+
+  <p><strong>Pointer path — <code>A</code> (U+0041).</strong> It's in segment 2
+  (<code>startCode=0x3a</code>, <code>idDelta=0</code>, <code>idRangeOffset=3092</code>). The spec's
+  formula computes a <em>byte address</em> inside the subtable:</p>
+<pre><code>addr = idRangeOffset[i]  +  2·(c − startCode[i])  +  &amp;idRangeOffset[i]
+     = 3092              +  2·(65 − 58)           +  9212
+     = 12318
+glyphIdArray @ 12318 = 1 ,  + idDelta(0)         = gid 1   → glyph "A"  ✓
+(cross-checked: font.getGlyphID('A') == 1)</code></pre>
+
+  <div class="callout warn">
+    <span class="label">Why that bizarre "offset from its own slot"</span>
+    <code>idRangeOffset</code> is the most confusing thing in OpenType, and it's a fossil of <strong>C
+    pointer arithmetic</strong>. In the original C, <code>glyphIdArray</code> sits in memory immediately
+    after <code>idRangeOffset</code>, so
+    <code>*(&amp;idRangeOffset[i] + idRangeOffset[i]/2 + (c − startCode[i]))</code> reaches into it
+    naturally. Encoding the offset <em>relative to the array slot itself</em> let 1990s code do one
+    pointer add with no separate base address. We're paying for that cleverness with confusion ever
+    since — which is exactly why the next format threw it out.
+  </div>
+
+  <h2>Format 12: the sane redesign</h2>
+  <p>Format 12 covers the full 32-bit space and is dramatically simpler. Its header is 16 bytes, then a
+  flat list of 12-byte <strong>groups</strong>:</p>
+  <table>
+    <tr><th class="mono">field</th><th>type</th><th>value (this font)</th></tr>
+    <tr><td class="mono">format</td><td>uint16</td><td>12</td></tr>
+    <tr><td class="mono">reserved</td><td>uint16</td><td>0</td></tr>
+    <tr><td class="mono">length</td><td>uint32</td><td>166924</td></tr>
+    <tr><td class="mono">language</td><td>uint32</td><td>0</td></tr>
+    <tr><td class="mono">nGroups</td><td>uint32</td><td>13909</td></tr>
+    <tr><td class="mono">groups[ ]</td><td>3×uint32</td><td>(startCharCode, endCharCode, startGlyphID)</td></tr>
+  </table>
+  <p>Each group says "codepoints <code>startChar … endChar</code> map to consecutive glyph ids beginning
+  at <code>startGlyphID</code>." Lookup is trivial: find the group with
+  <code>startChar ≤ c ≤ endChar</code>, then <code>gid = startGlyphID + (c − startChar)</code>. No
+  <code>idDelta</code>, no <code>idRangeOffset</code>, no pointer games.</p>
+
+<pre><code>group for 一: startChar=U+4DBE  endChar=U+4E49  startGID=3105
+gid = 3105 + (0x4E00 − 0x4DBE) = 3105 + 66 = 3171   → "u4E00"</code></pre>
+
+  <div class="callout proof">
+    <span class="label">The cross-check that proves you parsed it right</span>
+    Format 4 gave <code>一</code> → gid <strong>3171</strong> via signed <code>idDelta</code>; format 12
+    gives <code>一</code> → gid <strong>3171</strong> via group arithmetic. Two completely different
+    encodings, same answer — because they encode the same mapping. When your hand-parse agrees with the
+    other subtable (and with <code>getGlyphID</code>), you know you read the bytes correctly.
+  </div>
+
+  <!-- ───────────────────────── TOOLING ───────────────────────── -->
+  <span class="section-tag tool">tooling &amp; introspection</span>
+  <h2>Exploring the font yourself</h2>
+
+  <p>You will not remember every method name — nobody does. The skill is <strong>interrogating the
+  object</strong> instead of looking it up. Your three-line recipe for any fontTools object:</p>
+<pre><code><span class="kw">type</span>(obj)                                   <span class="cmt"># what class is this?</span>
+[a <span class="kw">for</span> a <span class="kw">in</span> <span class="kw">dir</span>(obj) <span class="kw">if</span> <span class="kw">not</span> a.startswith(<span class="str">"_"</span>)]   <span class="cmt"># what can it do?</span>
+<span class="kw">help</span>(obj.some_method)                       <span class="cmt"># what does that do?</span></code></pre>
+
+  <p>Run that on <code>font['cmap']</code> and you discover it's a <code>table__c_m_a_p</code> whose
+  public surface — the answer to your "what else besides <code>.tables</code>?" — is:</p>
+  <table>
+    <tr><th class="mono">on font['cmap']</th><th>returns / does</th></tr>
+    <tr><td class="mono">.tables</td><td>list of the raw subtable objects</td></tr>
+    <tr><td class="mono">.getBestCmap()</td><td>auto-pick best Unicode subtable → <code>{codepoint: glyphName}</code> dict</td></tr>
+    <tr><td class="mono">.getcmap(plat, enc)</td><td>fetch one specific subtable by <code>(platformID, platEncID)</code></td></tr>
+    <tr><td class="mono">.buildReversed()</td><td>invert it → <code>{glyphName: {codepoints}}</code> (e.g. <code>{'space': {32}}</code>)</td></tr>
+    <tr><td class="mono">.compile(font)</td><td>serialize back to <strong>bytes</strong> — the very bytes we hand-parsed above</td></tr>
+    <tr><td class="mono">.toXML() / decompile()</td><td>the TTX text form / parse from bytes</td></tr>
+  </table>
+
+  <p>And one subtable (a <code>cmap_format_4</code>) exposes:
+  <code>.cmap</code> (the <code>{codepoint: glyphName}</code> dict), <code>.format</code>,
+  <code>.platformID</code>, <code>.platEncID</code>, <code>.language</code>, <code>.length</code>,
+  <code>.isUnicode()</code>, <code>.isSymbol()</code>, <code>.getEncoding()</code>,
+  <code>.compile()</code>, <code>.toXML()</code>. So <code>.compile(font)</code> is your door from the
+  tidy Python object down to the raw bytes — that's exactly how the deep-dive above got its data.</p>
+
+  <h3>Command-line tools worth knowing</h3>
+  <table>
+    <tr><th>tool</th><th>use</th></tr>
+    <tr><td class="mono">ttx -t cmap font.ttf</td><td>dump just the cmap to a readable <code>.ttx</code> XML file (fontTools)</td></tr>
+    <tr><td class="mono">ttx -l font.ttf</td><td>list every table with offset/size (the Module-1 directory, instantly)</td></tr>
+    <tr><td class="mono">fontforge</td><td>GUI/scriptable editor — its <em>Encoding</em> view <em>is</em> the cmap, visually</td></tr>
+    <tr><td class="mono">hb-shape font.ttf "A一"</td><td>HarfBuzz: show the final shaped glyph ids (a preview of Module 6)</td></tr>
+  </table>
+
+  <div class="callout">
+    <span class="label">The habit to build</span>
+    When a walkthrough hands you <code>font['cmap'].tables</code>, don't just accept it — run
+    <code>dir()</code> on it and on one element, and skim <code>help()</code> for anything new. Five
+    minutes of poking teaches the object model better than any reference, and it's the muscle that lets
+    you "quickly look up and recall later".
+  </div>
+
   <!-- ───────────────────────── EXERCISES ───────────────────────── -->
   <span class="section-tag ex">exercises</span>
   <h2>Exercises</h2>
@@ -271,6 +445,41 @@
       <strong>tofu</strong> box. It signals "this font has no glyph for that character" — the text and
       the encoding are fine; coverage is what's missing.
     </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.7</span><span class="x-kind code">programming</span></div>
+    <p><strong>Hand-parse a codepoint through format 4 — no <code>.cmap</code> shortcut.</strong> Get the
+    raw bytes of a format-4 subtable, parse the header and the four arrays yourself with
+    <code>struct</code>, then resolve a character of your choice (try <code>永</code> U+6C38, or a digit
+    for the easy path) all the way to a glyph id by applying the <code>idRangeOffset==0</code> /
+    <code>!=0</code> rule. Verify your answer against <code>getBestCmap()</code> (or
+    <code>getGlyphID</code>).</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      A subtable can serialize itself: <code>raw = subtable.compile(font)</code> gives you the exact
+      bytes. The header is seven big-endian <code>uint16</code>s (<code>"&gt;7H"</code>); the four arrays
+      follow in order, each <code>segCount</code> entries — but <code>idDelta</code> is <strong>signed</strong>
+      (<code>"&gt;…h"</code>), and remember the 2-byte <code>reservedPad</code> after <code>endCode</code>.
+      For the pointer path, the offset is measured from the address of <code>idRangeOffset[i]</code> itself.
+    </details>
+    <p class="check-note">Paste your parser and the glyph id it produces — I'll check the arithmetic and the cross-check.</p>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.8</span><span class="x-kind code">programming</span></div>
+    <p><strong>Interrogate the object model.</strong> Without reading the docs, use the three-line recipe
+    (<code>type</code> / <code>dir</code> / <code>help</code>) to discover the API of
+    <code>font['cmap']</code> and of one of its subtables. Report <strong>three methods you hadn't used
+    before</strong> and, in one line each, what they return. Then actually call two of them — e.g.
+    <code>buildReversed()</code> and <code>getcmap(3, 1)</code> — and show a snippet of the output.
+    Bonus: run <code>ttx -t cmap</code> on the font and skim the XML.</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      <code>[a for a in dir(font['cmap']) if not a.startswith('_')]</code> lists the public surface;
+      <code>help(font['cmap'].buildReversed)</code> explains one. A subtable is
+      <code>font['cmap'].tables[0]</code>; <code>dir()</code> it too. <code>ttx</code> ships with
+      fontTools (<code>~/.venv/bin/ttx</code> or <code>python -m fontTools.ttx</code>).
+    </details>
+    <p class="check-note">Paste your three discoveries + the two outputs — I'll fill in anything you missed.</p>
   </div>
 
   <button class="complete-btn" id="mark-complete" data-module="2">Mark module complete</button>
