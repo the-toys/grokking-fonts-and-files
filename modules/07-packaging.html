@@ -193,22 +193,16 @@
   <div class="exercise">
     <div class="x-head"><span class="x-id">7.3</span><span class="x-kind code">programming</span></div>
     <p><strong>Count the distinct outlines.</strong> Using <code>~/.venv/bin/python</code> and
-    fontTools, open <code>LXGWHybrid.ttc</code> and print each face's <code>glyf</code> offset, then
-    confirm only two distinct values appear.</p>
-    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTCollection
-coll = TTCollection(<span class="str">"LXGWHybrid.ttc"</span>)
-offsets = []
-<span class="kw">for</span> i, sub <span class="kw">in</span> <span class="fn">enumerate</span>(coll.fonts):
-    off = sub.reader.tables[<span class="str">"glyf"</span>].offset
-    offsets.append(off)
-    <span class="fn">print</span>(<span class="str">f"face </span>{i:2}<span class="str">  glyf@</span>{off}<span class="str">"</span>)
-<span class="fn">print</span>(<span class="str">"distinct glyf offsets:"</span>, <span class="fn">sorted</span>(<span class="fn">set</span>(offsets)))</code></pre>
+    fontTools, write the script yourself: open <code>LXGWHybrid.ttc</code>, loop over every face and
+    print its <code>glyf</code> offset alongside the face index, then print the <em>set</em> of
+    distinct offsets to confirm only two values appear.</p>
     <p>How many distinct offsets are there? Which face indices share each? Do they match the
     Regular/Bold split from the walkthrough?</p>
-    <details><summary>Hint</summary>
-      <code>sub.reader.tables['glyf'].offset</code> reads the offset straight out of that face's
-      directory record without decompiling the outlines. You should see exactly two values:
-      <code>368</code> (even faces) and <code>25848192</code> (odd faces).
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      Open the file with <code>TTCollection</code>, iterate <code>coll.fonts</code>, and read each
+      face's offset straight from its directory record via
+      <code>sub.reader.tables['glyf'].offset</code> — that gives you the value without decompiling
+      the outlines. Collect the offsets into a <code>set</code> to see how many are distinct.
     </details>
     <p class="check-note">Paste your output and the <code>set</code> of distinct offsets — I'll confirm it's two.</p>
   </div>

@@ -201,18 +201,14 @@ onCurve:  1        1        0        0        0        0
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">3.3</span><span class="x-kind code">programming</span></div>
-    <p><strong>Inspect '十'.</strong> With fontTools, load the font, fetch the glyph
-    <code>'u5341'</code>, and print its <code>numberOfContours</code>, its total number of points, and
-    the count of on-curve vs off-curve points.</p>
-    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
-f = TTFont(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
-g = f[<span class="str">"glyf"</span>][<span class="str">"u5341"</span>]
-n = <span class="fn">len</span>(g.coordinates)
-on = <span class="fn">sum</span>(<span class="num">1</span> <span class="kw">for</span> fl <span class="kw">in</span> g.flags <span class="kw">if</span> fl &amp; <span class="num">1</span>)
-<span class="fn">print</span>(g.numberOfContours, n, on, n - on)</code></pre>
-    <details><summary>Hint</summary>
-      <code>g.coordinates</code> is the list of (x,y) points; <code>g.flags</code> is the parallel list
-      of flag bytes. Bit 0 (<code>fl &amp; 1</code>) set means on-curve. Total points should be 46.
+    <p><strong>Inspect '十'.</strong> Write a fontTools script yourself that loads the font, fetches the
+    glyph <code>'u5341'</code>, and prints four things: its <code>numberOfContours</code>, its total
+    number of points, the count of on-curve points, and the count of off-curve points. Decide which
+    flag bit distinguishes on-curve from off-curve, and count each yourself.</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      The glyph object from <code>f['glyf']['u5341']</code> exposes <code>g.coordinates</code> (the
+      points) and <code>g.flags</code> (the parallel flag bytes); bit 0 of each flag (<code>&amp; 1</code>)
+      marks on-curve. Total points should come out to 46.
     </details>
     <p class="check-note">Paste your code and output — I'll confirm the contour count is 1, points = 46,
     and the on/off split.</p>
@@ -220,21 +216,14 @@ on = <span class="fn">sum</span>(<span class="num">1</span> <span class="kw">for
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">3.4</span><span class="x-kind code">programming</span></div>
-    <p><strong>Measure '一' from <code>loca</code>.</strong> Compute the byte length of glyph '一'
-    (U+4E00) as the difference of its consecutive <code>loca</code> entries, and confirm it is nonzero
-    (i.e. the glyph really has outline data).</p>
-    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
-f = TTFont(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
-gid = f.getGlyphID(<span class="str">"u4E00"</span>)
-loca = f[<span class="str">"loca"</span>]
-length = loca[gid + <span class="num">1</span>] - loca[gid]
-<span class="fn">print</span>(gid, loca[gid], loca[gid + <span class="num">1</span>], length)
-<span class="kw">assert</span> length &gt; <span class="num">0</span></code></pre>
-    <details><summary>Hint</summary>
-      <code>f["loca"]</code> behaves like a list of byte offsets indexed by glyph ID, with
-      numGlyphs+1 entries. Map the character to its glyph ID with <code>f.getGlyphID("u4E00")</code>
-      (or via <code>f.getReverseGlyphMap()["u4E00"]</code>). The length is simply
-      <code>loca[gid+1] - loca[gid]</code>.
+    <p><strong>Measure '一' from <code>loca</code>.</strong> Write a script that finds the glyph ID for
+    '一' (U+4E00), reads the <code>loca</code> table, and computes the byte length of the glyph as the
+    difference of its two consecutive <code>loca</code> entries. Print the glyph ID, both offsets, and
+    the resulting length, then confirm the length is nonzero (the glyph really has outline data).</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      <code>f.getGlyphID("u4E00")</code> maps the name to its glyph ID, and <code>f['loca']</code>
+      indexes like a list of byte offsets (numGlyphs+1 entries) — the length you want is the gap
+      between entry <em>gid</em> and entry <em>gid+1</em>.
     </details>
     <p class="check-note">Paste the four printed numbers — I'll check the offsets are consistent and the
     length is positive.</p>

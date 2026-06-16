@@ -225,15 +225,15 @@ pixels</code></pre>
     <code>GPOS</code>: the script tags, the feature tags, and the number of lookups. Your output should
     reproduce the walkthrough table (6 scripts each; GSUB 12 lookups / 8 features; GPOS 3 lookups /
     3 features).</p>
-    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
-f = TTFont(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
-<span class="kw">for</span> tag <span class="kw">in</span> (<span class="str">"GSUB"</span>, <span class="str">"GPOS"</span>):
-    t = f[tag].table
-    scripts  = [r.ScriptTag  <span class="kw">for</span> r <span class="kw">in</span> t.ScriptList.ScriptRecord]
-    features = <span class="fn">sorted</span>({r.FeatureTag <span class="kw">for</span> r <span class="kw">in</span> t.FeatureList.FeatureRecord})
-    nlookups = t.LookupList.LookupCount
-    <span class="fn">print</span>(tag, <span class="fn">sorted</span>(scripts))
-    <span class="fn">print</span>(<span class="str">" "</span>, features, <span class="str">"lookups="</span>, nlookups)</code></pre>
+    <p>For each of <code>GSUB</code> and <code>GPOS</code>, reach the table object, collect the script
+    tags and feature tags, and count the lookups, then print all three so the result lines up with the
+    walkthrough figures above.</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      The hierarchy is reachable as <code>f['GSUB'].table.ScriptList</code> /
+      <code>.FeatureList</code> / <code>.LookupList</code>. Each <code>ScriptRecord</code> has a
+      <code>.ScriptTag</code>; each <code>FeatureRecord</code> a <code>.FeatureTag</code>; lookups are
+      counted by <code>LookupList.LookupCount</code> (or <code>len(LookupList.Lookup)</code>).
+    </details>
     <details><summary>Hint</summary>
       The hierarchy is reachable as <code>f['GSUB'].table.ScriptList</code> /
       <code>.FeatureList</code> / <code>.LookupList</code>. Each <code>ScriptRecord</code> has a

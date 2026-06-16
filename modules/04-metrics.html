@@ -177,23 +177,15 @@
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">4.3</span><span class="x-kind code">programming</span></div>
-    <p><strong>Read the metrics yourself.</strong> With fontTools, print <code>(advance, lsb)</code> for
-    <code>'一'</code>, <code>'A'</code>, and <code>'i'</code> via <code>f['hmtx']</code> and the cmap,
-    then assert <code>'一'</code>'s advance equals <code>unitsPerEm</code>.</p>
-    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
-f = TTFont(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
-cmap = f.getBestCmap()
-hmtx = f[<span class="str">"hmtx"</span>]
-upm  = f[<span class="str">"head"</span>].unitsPerEm
-<span class="kw">for</span> ch <span class="kw">in</span> <span class="str">"一Ai"</span>:
-    name = cmap[<span class="fn">ord</span>(ch)]
-    adv, lsb = hmtx[name]
-    <span class="fn">print</span>(ch, name, adv, lsb)
-<span class="kw">assert</span> hmtx[cmap[<span class="fn">ord</span>(<span class="str">"一"</span>)]][<span class="num">0</span>] == upm</code></pre>
-    <details><summary>Hint</summary>
+    <p><strong>Read the metrics yourself.</strong> Write a fontTools script that opens
+    <code>LXGWWenKaiMonoGB-Regular.ttf</code> and, for each of <code>'一'</code>, <code>'A'</code>, and
+    <code>'i'</code>, looks up the glyph name through the font's best cmap and prints its
+    <code>(advance, lsb)</code> pair from the <code>hmtx</code> table. Finally, read
+    <code>unitsPerEm</code> from <code>head</code> and assert that <code>'一'</code>'s advance equals it.</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
       <code>getBestCmap()</code> returns a <code>{codepoint: glyphName}</code> dict; index it with
-      <code>ord(ch)</code>. <code>hmtx[glyphName]</code> yields a <code>(advance, lsb)</code> tuple.
-      Run with <code>~/.venv/bin/python</code>.
+      <code>ord(ch)</code>. <code>hmtx[glyphName]</code> yields a <code>(advance, lsb)</code> tuple, and
+      <code>f['head'].unitsPerEm</code> is the em size. Run with <code>~/.venv/bin/python</code>.
     </details>
     <p class="check-note">You should see <code>(1000,59)</code>, <code>(500,21)</code>,
     <code>(500,73)</code> and the assert passing. Paste your output — I'll confirm.</p>
@@ -231,18 +223,16 @@ upm  = f[<span class="str">"head"</span>].unitsPerEm
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">4.6</span><span class="x-kind code">programming</span></div>
-    <p><strong>Verify the build.py claim.</strong> Load <em>both</em> fonts, and for each compute
-    <code>'一'</code>'s advance ÷ <code>unitsPerEm</code>. Confirm the two ratios are equal — the
-    alignment guarantee that lets ZhenKai be dropped in as the bold without re-metricizing.</p>
-    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
-<span class="kw">def</span> <span class="fn">han_em</span>(path):
-    f = TTFont(path)
-    name = f.getBestCmap()[<span class="num">0x4E00</span>]
-    <span class="kw">return</span> f[<span class="str">"hmtx"</span>][name][<span class="num">0</span>] / f[<span class="str">"head"</span>].unitsPerEm
-a = han_em(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
-b = han_em(<span class="str">"LXGWZhenKaiGB-Regular.ttf"</span>)
-<span class="fn">print</span>(a, b)
-<span class="kw">assert</span> a == b == <span class="num">1.0</span></code></pre>
+    <p><strong>Verify the build.py claim.</strong> Write a script that loads <em>both</em> fonts
+    (<code>LXGWWenKaiMonoGB-Regular.ttf</code> and <code>LXGWZhenKaiGB-Regular.ttf</code>) and, for each,
+    computes <code>'一'</code>'s advance ÷ <code>unitsPerEm</code>. Print both ratios and assert they are
+    equal (and both <code>1.0</code>) — the alignment guarantee that lets ZhenKai be dropped in as the
+    bold without re-metricizing.</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      <code>'一'</code> is codepoint <code>0x4E00</code>; resolve it via <code>getBestCmap()</code>, read
+      the advance from <code>f['hmtx'][name][0]</code>, and divide by <code>f['head'].unitsPerEm</code>.
+      A small helper taking a path keeps the two-font comparison tidy.
+    </details>
     <details><summary>If you only have one font</summary>
       Compute the ratio for the one you have and state what equality <em>would</em> prove: if both
       faces put <code>'一'</code> at exactly 1.0 em, every full-width column keeps the same width after

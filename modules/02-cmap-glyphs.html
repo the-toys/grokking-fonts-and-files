@@ -210,14 +210,15 @@
     <p><strong>Map codepoints to glyph names.</strong> Using <code>~/.venv/bin/python</code> and
     fontTools, load the font, call <code>getBestCmap()</code>, and print the glyph name for a handful of
     codepoints — at least <code>A</code> (U+0041), <code>一</code> (U+4E00), and a supplementary-plane
-    character such as <code>𠀀</code> (U+20000, CJK Ext-B).</p>
-    <pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
-font = TTFont(<span class="str">"LXGWWenKaiMonoGB-Regular.ttf"</span>)
-cmap = font.getBestCmap()          <span class="cmt"># {codepoint: glyphName}, best Unicode subtable</span>
-<span class="kw">for</span> cp <span class="kw">in</span> [<span class="num">0x41</span>, <span class="num">0x4E00</span>, <span class="num">0x20000</span>]:
-    <span class="fn">print</span>(<span class="str">f"U+</span>{cp:04X}<span class="str"> </span>{<span class="fn">chr</span>(cp)!r}<span class="str"> -&gt; </span>{cmap.get(cp)}<span class="str">"</span>)</code></pre>
+    character such as <code>𠀀</code> (U+20000, CJK Ext-B). For each codepoint, print the codepoint, the
+    character itself, and the glyph name the cmap resolves it to.</p>
     <p>Which subtable did <code>getBestCmap()</code> pick, and how can you tell? (Hint: the U+20000
     lookup only succeeds because the chosen subtable is 32-bit.)</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      Open the font with <code>TTFont(path)</code> and call <code>getBestCmap()</code> — it returns a
+      plain <code>{codepoint: glyphName}</code> dict, so each lookup is just <code>cmap.get(cp)</code>.
+      Iterate over your list of codepoints and format each line yourself.
+    </details>
     <details><summary>Hint</summary>
       <code>getBestCmap()</code> prefers the widest-coverage Unicode subtable. If the U+20000 lookup
       returns a name rather than <code>None</code>, you were handed the format-12 mapping. You can
