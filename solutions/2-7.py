@@ -121,7 +121,7 @@ def explore_cmap_format4(n_segs, total, f):
     )
     # print(cmap_table.lookup("一"))
     # print(cmap_table.lookup("A"))
-    print(cmap_table.lookup("永"))
+    print(cmap_table.lookup(chr(0x3D)))
 
 
 explore_cmap()
