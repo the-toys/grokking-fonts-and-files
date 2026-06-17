@@ -210,6 +210,19 @@
     </details>
   </div>
 
+  <h3>Inspecting a font with fontTools</h3>
+  <p>The next two exercises are hands-on, so here's the minimum tooling — <a
+  href="https://github.com/fonttools/fonttools">fontTools</a>, the standard Python library for
+  reading/writing fonts (it does the Module-1 sfnt parsing for you):</p>
+<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+font = TTFont(path)              <span class="cmt"># open & parse the font</span>
+font[<span class="str">"cmap"</span>].tables           <span class="cmt"># list of subtables; each has .format, .platformID, .platEncID</span>
+sub.cmap                        <span class="cmt"># one subtable's {codepoint: glyphName} dict</span>
+font.getBestCmap()              <span class="cmt"># merged best-Unicode {codepoint: glyphName}</span>
+font.getGlyphID(name)           <span class="cmt"># glyph name -> integer GID</span></code></pre>
+  <p>Run it with <code>~/.venv/bin/python</code>. That's everything the next two exercises need; we go a
+  bit deeper in the tooling section later.</p>
+
   <div class="exercise">
     <div class="x-head"><span class="x-id">2.5</span><span class="x-kind code">programming</span></div>
     <p><strong>Count what only format 12 can reach.</strong> Count how many codepoints appear in a
@@ -324,7 +337,9 @@
   <!-- ───────────────────────── DEEP-DIVE B: format 4 ───────────────────────── -->
   <h2>Hand-parsing format 4</h2>
 
-  <p>Now we can decode the subtable at offset 44. Its 14-byte header:</p>
+  <p>Now we can decode the subtable at offset 44. (To grab any subtable's raw bytes yourself for this
+  kind of hand-parsing: <code>raw = font['cmap'].tables[i].compile(font)</code> re-serializes the table
+  to bytes.) Its 14-byte header:</p>
 
   <table>
     <tr><th class="mono">bytes</th><th>field</th><th>value</th><th>meaning</th></tr>
