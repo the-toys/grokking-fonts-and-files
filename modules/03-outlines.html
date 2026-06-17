@@ -37,6 +37,36 @@
   <!-- ───────────────────────── CONCEPT 2 ───────────────────────── -->
   <span class="section-tag concept">concept</span>
   <h2>Points, curves, and the two technologies</h2>
+
+  <h3>First, what a Bézier curve actually is</h3>
+  <p>Before "on-curve / off-curve" can mean anything, you need the one idea underneath them. Start with a
+  straight line from <strong>A</strong> to <strong>B</strong>. Drop a third point <strong>C</strong> off
+  to one side and treat it as a <em>magnet</em>: bend the line so it bulges <em>toward</em> C, while still
+  starting exactly at A, ending exactly at B, and never quite reaching C. That bent line is a
+  <strong>quadratic Bézier curve</strong>.</p>
+<pre>          C ●   ← control point (the "magnet": the curve leans toward it, never touches)
+         ·     ·
+       ·         ·          ← the actual curve
+  A ●·             ·● B
+  on-curve          on-curve   (the curve DOES pass through A and B)</pre>
+  <p>Two kinds of point fall out — and this is the entire vocabulary of glyph outlines:</p>
+  <ul>
+    <li><strong>On-curve points</strong> (A, B) — the path passes <em>through</em> them. Also called
+      <strong>anchors</strong>: the outline is pinned to them. (So "point 0 = anchor" just means point 0
+      is on-curve.)</li>
+    <li><strong>Off-curve points</strong> (C) — the path only <em>leans toward</em> them. Also called
+      <strong>control points</strong>: C far out → big bulge; C on the A–B line → no bulge (straight).</li>
+  </ul>
+  <p><strong>Quadratic vs cubic is just how many magnets per segment:</strong> a <strong>quadratic</strong>
+  has <strong>one</strong> control point (a simple arc — <em>TrueType</em>); a <strong>cubic</strong> has
+  <strong>two</strong>, one near each end (enough for an S-curve in one segment — <em>CFF/PostScript</em>).
+  A quadratic can't make an S in one segment, so TrueType chains several — which is why TrueType glyphs
+  carry more points than CFF for the same shape.</p>
+  <p>A contour is then just a loop of anchors with control points between: two adjacent anchors
+  (<code>1 1</code>) = a straight edge; anchor–control–anchor (<code>1 0 1</code>) = one curved segment;
+  two controls in a row (<code>0 0</code>) = TrueType invents an anchor at their midpoint (next section).</p>
+
+  <h3>The two technologies</h3>
   <p>Which curve math a font uses is announced by its sfnt magic from
   <a href="01-sfnt-container.html">Module 1</a>:</p>
   <ul>
