@@ -246,22 +246,32 @@ font.getGlyphID(name)           <span class="cmt"># glyph name -> integer GID</s
     <p><strong>Map codepoints to glyph names.</strong> Load the font with fontTools, call
     <code>getBestCmap()</code>, and print the glyph name for <code>A</code> (U+0041), <code>一</code>
     (U+4E00), and a supplementary-plane character this font actually maps, e.g. <code>𖿣</code>
-    (U+16FE3, an old-Chinese mark). Print the codepoint, the character, and the resolved name. Which
-    subtable did <code>getBestCmap()</code> pick, and how can you tell? <em>(Heads-up: an "obvious" pick
-    like <code>𠀀</code> U+20000 returns <code>None</code> — this GB font doesn't cover it. Verify, don't
-    assume.)</em></p>
+    (U+16FE3, an old-Chinese mark). Print the codepoint, the character, and the resolved name. Then the
+    real question: from the returned dict alone, what can you conclude about <em>which</em> subtable was
+    used — and what can you <strong>not</strong>? <em>(Heads-up: an "obvious" pick like <code>𠀀</code>
+    U+20000 returns <code>None</code> — this GB font doesn't cover it. Verify, don't assume.)</em></p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
       <code>getBestCmap()</code> returns a plain <code>{codepoint: glyphName}</code> dict, so each lookup
-      is <code>cmap.get(cp)</code>. A supplementary lookup (<code>cp &gt; 0xFFFF</code>) only succeeds if
-      the chosen subtable is 32-bit (format 12) — a format-4 mapping physically can't hold those, so it
-      would miss. Inspect <code>[(t.platformID,t.platEncID,t.format) for t in font["cmap"].tables]</code>
-      to see what's available.
+      is <code>cmap.get(cp)</code>. The presence of any <code>cp &gt; 0xFFFF</code> tells you the format
+      (format 4 physically can't hold those). But count the format-12 subtables in
+      <code>[(t.platformID,t.platEncID,t.format) for t in font["cmap"].tables]</code> before claiming
+      <em>which</em> one — and try <code>best is font["cmap"].tables[i].cmap</code> to see if identity
+      even helps.
     </details>
     <details><summary>✓ Check your answer</summary>
       <code>A</code> → "A" (gid 1); <code>一</code> → "u4E00" (gid 3171); <code>𖿣</code> U+16FE3 →
-      "oldchineseiterationmodhan" (gid 21286). <code>getBestCmap()</code> picks the
-      <strong>(3,10) format-12</strong> subtable — you can tell because the supplementary character
-      resolves at all; with only format 4 it would be <code>None</code>.
+      "oldchineseiterationmodhan" (gid 21286).<br>
+      <strong>What the dict tells you:</strong> the mapping is <strong>format 12</strong> — it contains
+      codepoints above <code>0xFFFF</code> (max here is <code>U+FFFFD</code>), which format 4 can't hold
+      and the empty format-14 doesn't provide.<br>
+      <strong>What it does NOT tell you:</strong> <em>which</em> format-12 subtable. There are two,
+      <code>(0,4)</code> and <code>(3,10)</code>, with identical content — and because they share one
+      offset on disk, fontTools dedups them to the <em>same dict object</em>, so even
+      <code>best is tables[(0,4)].cmap</code> and <code>best is tables[(3,10)].cmap</code> are
+      <strong>both True</strong>. The result is genuinely indistinguishable. The answer is
+      <code>(3,10)</code> <em>only</em> because that's first in fontTools' documented preference order
+      <code>cmapPreferences = (3,10),(0,6),(0,4),(3,1),…</code> — a fact about the algorithm, not about
+      the data. Lesson: the dict reveals the <em>format</em>, never the platform pair.
     </details>
     <p class="check-note">Self-check above — or paste your code/output to your tutor.</p>
   </div>
