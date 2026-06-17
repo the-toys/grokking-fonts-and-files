@@ -190,12 +190,36 @@ onCurve:  1        1        0        0        0        0
       2–5; they only pull it.</li>
   </ul>
 
+  <figure>
+    <img src="../specimens/yi-first6-points.png"
+         alt="The first six points of U+4E00 plotted on the em square, anchors and controls colour-coded">
+    <figcaption><strong>The first six points of '一' on the 1000×1000 em square</strong> (x → right,
+    y → up). Blue circles are the two on-curve <em>anchors</em> (0, 1); red squares are the four off-curve
+    <em>controls</em> (2–5). <em>Left:</em> the whole em square — anchor 0 is far left, the rest cluster
+    at the stroke's right end. <em>Right:</em> a zoom showing the actual curve bowing toward the controls
+    and never touching them, with the implied on-curve midpoints (grey) where the quadratic segments join.</figcaption>
+  </figure>
+
   <h3>'十' (U+5341) and the composite dieresis</h3>
   <p>"Ten" — a cross: 1 contour, <strong>46 points</strong>, flags beginning <code>1 1 0 1 0 1</code>
   (an alternating anchor/control rhythm — straighter strokes with single curves at the corners). And the
   spacing <strong>dieresis</strong> (¨) is a <strong>composite</strong>: it has <em>no outline of its
   own</em> — its whole record is "draw the <code>dieresiscomb</code> glyph, shifted to (500, 0)". One
   outline, reused.</p>
+
+  <h3>More examples: on/off-curve across shapes</h3>
+  <figure>
+    <img src="../specimens/glyph-points-gallery.png"
+         alt="Four glyphs with on-curve anchors and off-curve controls marked on the em square">
+    <figcaption>Four real outlines, points colour-coded the same way. <strong>'─'</strong>: four on-curve
+    corners, zero controls — a pure polygon, exactly the glyph we hand-parse in the deep-dive.
+    <strong>'one' (一)</strong> and <strong>'ten' (十)</strong>: anchors at stroke ends and corners,
+    controls bunched at the rounded brush ends. <strong>'O'</strong>: on-curve anchors sit at the four
+    extrema (top/bottom/left/right), off-curve controls shape the curve between them, and a second
+    <em>inner</em> contour carves the counter — the hole is "inside" only because the non-zero winding
+    rule (Concept 1) counts it that way. Notice curves always come from <em>off-curve</em> points;
+    straight edges have <em>none</em>.</figcaption>
+  </figure>
 
   <h3>Inspecting glyphs with fontTools</h3>
   <p>The next two exercises are hands-on. Minimum tooling:</p>

@@ -71,6 +71,9 @@ h1 { font-size: 32px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -.5px;
 h2 { font-size: 23px; margin: 46px 0 14px; padding-top: 10px; letter-spacing: -.3px; }
 h3 { font-size: 17px; margin: 28px 0 8px; color: var(--cyan); }
 h4 { font-size: 15px; margin: 20px 0 6px; color: var(--fg); }
+figure { margin: 22px 0; }
+figure img { width: 100%; display: block; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+figcaption { color: var(--fg-faint); font-size: 13px; line-height: 1.5; margin-top: 8px; }
 .lede { font-size: 18px; color: var(--fg-dim); margin: 0 0 8px; }
 p { margin: 12px 0; }
 a { color: var(--accent); }
