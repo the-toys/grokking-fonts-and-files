@@ -159,7 +159,7 @@ onCurve:  1        1        0        0        0        0
 
   <div class="callout proof">
     <span class="label">See it for yourself</span>
-    <code>~/.venv/bin/python -c "from fontTools.ttLib import TTFont;
+    <code>python -c "from fontTools.ttLib import TTFont;
     f=TTFont('LXGWWenKaiMonoGB-Regular.ttf'); g=f['glyf']['u4E00'];
     print(g.numberOfContours, g.coordinates[:6], list(g.flags[:6]))"</code> prints the contour
     count, the first coordinates, and the on-curve flags shown above (flag bit 0 = on-curve).

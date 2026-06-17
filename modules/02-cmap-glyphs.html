@@ -220,7 +220,7 @@ font[<span class="str">"cmap"</span>].tables           <span class="cmt"># list 
 sub.cmap                        <span class="cmt"># one subtable's {codepoint: glyphName} dict</span>
 font.getBestCmap()              <span class="cmt"># merged best-Unicode {codepoint: glyphName}</span>
 font.getGlyphID(name)           <span class="cmt"># glyph name -> integer GID</span></code></pre>
-  <p>Run it with <code>~/.venv/bin/python</code>. That's everything the next two exercises need; we go a
+  <p>Run it with <code>python</code>. That's everything the next two exercises need; we go a
   bit deeper in the tooling section later.</p>
 
   <div class="exercise">
@@ -537,7 +537,7 @@ gid = 3105 + (0x4E00 − 0x4DBE) = 3105 + 66 = 3171   → "u4E00"</code></pre>
       <code>[a for a in dir(font['cmap']) if not a.startswith('_')]</code> lists the public surface;
       <code>help(font['cmap'].buildReversed)</code> explains one. A subtable is
       <code>font['cmap'].tables[0]</code>; <code>dir()</code> it too. <code>ttx</code> ships with
-      fontTools (<code>~/.venv/bin/ttx</code> or <code>python -m fontTools.ttx</code>).
+      fontTools (<code>ttx</code> or <code>python -m fontTools.ttx</code>).
     </details>
     <details><summary>✓ Check your answer</summary>
       There's no single right answer, but the full public surface of <code>font['cmap']</code> is:

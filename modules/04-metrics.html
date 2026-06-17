@@ -185,7 +185,7 @@
     <details><summary>Stuck? a nudge (no full solution)</summary>
       <code>getBestCmap()</code> returns a <code>{codepoint: glyphName}</code> dict; index it with
       <code>ord(ch)</code>. <code>hmtx[glyphName]</code> yields a <code>(advance, lsb)</code> tuple, and
-      <code>f['head'].unitsPerEm</code> is the em size. Run with <code>~/.venv/bin/python</code>.
+      <code>f['head'].unitsPerEm</code> is the em size. Run with <code>python</code>.
     </details>
     <p class="check-note">You should see <code>(1000,59)</code>, <code>(500,21)</code>,
     <code>(500,73)</code> and the assert passing. Paste your output — I'll confirm.</p>

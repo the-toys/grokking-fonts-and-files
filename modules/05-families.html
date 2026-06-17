@@ -252,7 +252,7 @@ font["name"].removeNames(nameID=NAME_TYPO_SUBFAMILY)  <span class="cmt"># drop i
     <p><strong>Read the identity yourself.</strong> Using fontTools, open WenKai and print
     <code>usWeightClass</code>, <code>bin(fsSelection)</code>, <code>bin(head.macStyle)</code>, and name
     IDs 1/2/6. Confirm them against the walkthrough table.</p>
-    <pre><code><span class="cmt"># ~/.venv/bin/python this.py LXGWWenKaiMonoGB-Regular.ttf</span>
+    <pre><code><span class="cmt"># python this.py LXGWWenKaiMonoGB-Regular.ttf</span>
 <span class="kw">import</span> sys
 <span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
 f = TTFont(sys.argv[<span class="num">1</span>])

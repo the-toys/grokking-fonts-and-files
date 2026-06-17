@@ -164,7 +164,7 @@ pixels</code></pre>
 
   <div class="callout proof">
     <span class="label">See it for yourself</span>
-    <code>~/.venv/bin/python specimens/extract.py LXGWWenKaiMonoGB-Regular.ttf</code> prints these
+    <code>python specimens/extract.py LXGWWenKaiMonoGB-Regular.ttf</code> prints these
     script / feature / lookup figures. Exercise 6.4 below walks the same tables by hand with fontTools.
   </div>
 
@@ -221,7 +221,7 @@ pixels</code></pre>
   <div class="exercise">
     <div class="x-head"><span class="x-id">6.4</span><span class="x-kind code">programming</span></div>
     <p><strong>Walk the layout tables with fontTools.</strong> Using
-    <code>~/.venv/bin/python</code>, open WenKai and print, for both <code>GSUB</code> and
+    <code>python</code>, open WenKai and print, for both <code>GSUB</code> and
     <code>GPOS</code>: the script tags, the feature tags, and the number of lookups. Your output should
     reproduce the walkthrough table (6 scripts each; GSUB 12 lookups / 8 features; GPOS 3 lookups /
     3 features).</p>
