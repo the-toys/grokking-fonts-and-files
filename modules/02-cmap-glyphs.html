@@ -439,6 +439,63 @@ glyphIdArray @ 12318 = 1 ,  + idDelta(0)         = gid 1   → glyph "A"  ✓
     since — which is exactly why the next format threw it out.
   </div>
 
+  <h3>Why it's built this way — the encoder's view</h3>
+  <p>The format stops looking arbitrary the moment you think like the tool <em>writing</em> it. An
+  encoder has a set of (codepoint → glyph-id) pairs and wants the smallest encoding. It groups them into
+  contiguous codepoint segments and, per segment, picks the cheaper of two representations:</p>
+  <table>
+    <tr><th>codepoints in the range</th><th>their glyph ids</th><th>encoding chosen</th></tr>
+    <tr><td>contiguous</td><td>also contiguous (<code>c + k</code>)</td><td><strong>idDelta only</strong> — store one constant <code>k</code>, no per-glyph data</td></tr>
+    <tr><td>contiguous</td><td>scattered</td><td><strong>glyphIdArray</strong> — list the ids explicitly; <code>idRangeOffset</code> points to the list</td></tr>
+    <tr><td>has interior holes</td><td>—</td><td><strong>glyphIdArray</strong> with <code>0</code> entries for the unmapped codepoints</td></tr>
+  </table>
+  <p>So <code>idDelta</code> is the <em>compression shortcut</em> for the common case (a block of glyphs
+  laid out in codepoint order), and <code>glyphIdArray</code> is the <em>fallback</em> when the ids don't
+  line up. A single segment can't do both, hence two mechanisms.</p>
+
+  <h4>The contiguous strip (why <code>idRangeOffset</code> is "from its own slot")</h4>
+  <p><code>idRangeOffset[]</code> and <code>glyphIdArray[]</code> are one continuous run of
+  <code>uint16</code> cells — <code>glyphIdArray</code> is just the tail. Each non-zero
+  <code>idRangeOffset</code> cell is an <strong>arrow into that tail, measured from itself</strong>.
+  A toy segment mapping <code>A,B,C</code> to non-consecutive glyphs <code>10, (hole), 25</code>:</p>
+<pre>            ┌ idRangeOffset[] ┐ ┌───────── glyphIdArray[] ─────────┐
+ slot:          0         1         2         3         4
+            ┌─────────┬─────────┬─────────┬─────────┬─────────┐
+ value:     │    4    │    0    │   10    │    0    │   25    │
+            │ iRO[0]  │ iRO[1]  │ glyph A │ (hole)  │ glyph C │
+            └────┬────┴─────────┴─────────┴─────────┴─────────┘
+                 └─ "+4 bytes = +2 slots from MY slot" ─▶ slot 2 (start of this run)
+                       then step +(c − startCode) slots into it</pre>
+  <ul>
+    <li><code>'A'</code> → slot 2 + 0 = <strong>10</strong></li>
+    <li><code>'B'</code> → slot 2 + 1 = <strong>0</strong> ⇒ <code>.notdef</code> (the hole)</li>
+    <li><code>'C'</code> → slot 2 + 2 = <strong>25</strong></li>
+  </ul>
+  <p>As one index into that combined strip (where <code>idRangeOffset[idx]</code> lives at slot
+  <code>idx</code>):</p>
+<pre><code>slot = idx + idRangeOffset[idx]//2 + (c − startCode[idx])
+       └─┬─┘   └────────┬────────┘   └────────┬────────┘
+   self-relative base   bytes → slots      step into the run
+gid  = strip[slot]
+gid  = 0  ?  .notdef   :   (gid + idDelta[idx]) &amp; 0xFFFF</code></pre>
+
+  <div class="callout warn">
+    <span class="label">The two-character bug to avoid</span>
+    The base is <code>idx</code> (the offset is self-relative — measured from <em>that</em> cell), and
+    <code>//2</code> converts <strong>bytes → slots</strong>. Writing <code>val + val//2</code> (keeping
+    the byte value) or dropping the <code>idx</code> base sends you thousands of cells past the target —
+    it only bites the <code>idRangeOffset != 0</code> case, so the easy path keeps "working" and hides it.
+  </div>
+
+  <div class="callout proof">
+    <span class="label">What this font actually does</span>
+    Of its 1532 format-4 segments, <strong>564 use the glyphIdArray path</strong> — and <em>all 564 have
+    <code>idDelta = 0</code></em> with <strong>no interior holes</strong>. So here <code>glyphIdArray</code>
+    is used purely for <em>scattered glyph ids</em> (e.g. ASCII, built out of codepoint order), never for
+    gaps, and <code>idDelta</code> does nothing on that path. The <code>0 ⇒ .notdef</code> rule is still
+    mandatory — it's what <em>permits</em> holes — this font just doesn't use any.
+  </div>
+
   <div class="exercise">
     <div class="x-head"><span class="x-id">2.8</span><span class="x-kind code">programming</span></div>
     <p><strong>Hand-parse a codepoint through format 4 — no <code>.cmap</code> shortcut.</strong> Get the
