@@ -166,8 +166,11 @@
   <div class="callout key">
     <span class="label">The transferable insight</span>
     The gap <strong>46510 − 43498 = 3012</strong> is the count of characters this font supports that sit
-    <em>above</em> the 16-bit BMP — supplementary-plane codepoints like CJK Extension B (which starts at
-    <code>U+20000</code>). A format-4 subtable is physically incapable of addressing those: its
+    <em>above</em> the 16-bit BMP. In <em>this</em> font they're scattered specials — phonetic modifiers,
+    old-Chinese marks, small kana — ranging from <code>U+107A5</code> to <code>U+FFFFD</code>.
+    (Surprisingly for a CJK font, it does <strong>not</strong> include CJK Extension B at
+    <code>U+20000+</code> — always check coverage rather than assume it.) A format-4 subtable is
+    physically incapable of addressing any of them: its
     codepoints are 16-bit. That is the entire reason a font ships <em>both</em> a format-4 and a
     format-12 subtable. (And note <code>numGlyphs</code> = 46830 &gt; 46510 mapped codepoints — some
     glyphs, like <code>.notdef</code> and shaping-only alternates, have no codepoint pointing at them.)
@@ -199,10 +202,11 @@
     would break if you deleted the format-12 subtables and kept only format 4?</p>
     <details><summary>Show solution</summary>
       Format 4 uses 16-bit codepoints, so it can only address the BMP (<code>≤ U+FFFF</code>). The
-      <strong>46510 − 43498 = 3012</strong> characters above <code>U+FFFF</code> — supplementary planes,
-      e.g. CJK Extension B at <code>U+20000+</code> — would have no mapping. Asking for one would return
-      <code>.notdef</code>, rendering as a <strong>tofu box</strong> even though the glyph is sitting in
-      the font. The format-12 subtable is what makes those glyphs reachable.
+      <strong>46510 − 43498 = 3012</strong> characters above <code>U+FFFF</code> — supplementary-plane
+      specials this font carries, like <code>U+16FE3</code> (an old-Chinese mark) — would have no
+      mapping. Asking for one would return <code>.notdef</code>, rendering as a <strong>tofu box</strong>
+      even though the glyph is sitting in the font. The format-12 subtable is what makes those glyphs
+      reachable.
     </details>
   </div>
 
@@ -216,23 +220,37 @@
       and one with <code>.format == 12</code>; each has a <code>.cmap</code> dict keyed by codepoint. Then
       a set difference: <code>len(set(fmt12.cmap) - set(fmt4.cmap))</code>. Expected ≈ 46510 − 43498.
     </details>
-    <p class="check-note">Paste your count and the one-liner — I'll confirm it equals 3012.</p>
+    <details><summary>✓ Check your answer</summary>
+      <strong>3012</strong>. With <code>t4</code>/<code>t12</code> the format-4 and format-12 subtables
+      from <code>font['cmap'].tables</code>: <code>len(set(t12.cmap) - set(t4.cmap))</code>, or equally
+      <code>sum(1 for cp in t12.cmap if cp &gt; 0xFFFF)</code>. Both equal 46510 − 43498 = 3012.
+    </details>
+    <p class="check-note">Self-check above — or paste your one-liner to your tutor.</p>
   </div>
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">2.6</span><span class="x-kind code">programming</span></div>
     <p><strong>Map codepoints to glyph names.</strong> Load the font with fontTools, call
     <code>getBestCmap()</code>, and print the glyph name for <code>A</code> (U+0041), <code>一</code>
-    (U+4E00), and a supplementary-plane character such as <code>𠀀</code> (U+20000). Print the codepoint,
-    the character, and the resolved name. Which subtable did <code>getBestCmap()</code> pick, and how can
-    you tell?</p>
+    (U+4E00), and a supplementary-plane character this font actually maps, e.g. <code>𖿣</code>
+    (U+16FE3, an old-Chinese mark). Print the codepoint, the character, and the resolved name. Which
+    subtable did <code>getBestCmap()</code> pick, and how can you tell? <em>(Heads-up: an "obvious" pick
+    like <code>𠀀</code> U+20000 returns <code>None</code> — this GB font doesn't cover it. Verify, don't
+    assume.)</em></p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
       <code>getBestCmap()</code> returns a plain <code>{codepoint: glyphName}</code> dict, so each lookup
-      is <code>cmap.get(cp)</code>. If the U+20000 lookup returns a name (not <code>None</code>), you got
-      the 32-bit format-12 mapping; confirm with
-      <code>[(t.platformID,t.platEncID,t.format) for t in font["cmap"].tables]</code>.
+      is <code>cmap.get(cp)</code>. A supplementary lookup (<code>cp &gt; 0xFFFF</code>) only succeeds if
+      the chosen subtable is 32-bit (format 12) — a format-4 mapping physically can't hold those, so it
+      would miss. Inspect <code>[(t.platformID,t.platEncID,t.format) for t in font["cmap"].tables]</code>
+      to see what's available.
     </details>
-    <p class="check-note">Paste your code and output — I'll verify against the real file.</p>
+    <details><summary>✓ Check your answer</summary>
+      <code>A</code> → "A" (gid 1); <code>一</code> → "u4E00" (gid 3171); <code>𖿣</code> U+16FE3 →
+      "oldchineseiterationmodhan" (gid 21286). <code>getBestCmap()</code> picks the
+      <strong>(3,10) format-12</strong> subtable — you can tell because the supplementary character
+      resolves at all; with only format 4 it would be <code>None</code>.
+    </details>
+    <p class="check-note">Self-check above — or paste your code/output to your tutor.</p>
   </div>
 
   <!-- ───────────────────────── DEEP-DIVE A: the cmap index ───────────────────────── -->
@@ -292,7 +310,15 @@
       format. (You can get 187808 yourself from a Module-1 style parse, or from
       <code>TTFont(path).reader.tables['cmap'].offset</code>.)
     </details>
-    <p class="check-note">Paste your records list + the (3,1) subtable's file offset and format — I'll check.</p>
+    <details><summary>✓ Check your answer</summary>
+      <code>version=0, numTables=5</code>. Records: <code>(0,3)→44</code>, <code>(0,4)→50156</code>,
+      <code>(0,5)→217080</code>, <code>(3,1)→44</code>, <code>(3,10)→50156</code>. So
+      <code>(0,3)</code> &amp; <code>(3,1)</code> share offset 44 (and <code>(0,4)</code> &amp;
+      <code>(3,10)</code> share 50156). The (3,1) subtable is at file offset
+      <code>187808 + 44 = 187852</code>, and its first <code>uint16</code> there is <code>4</code> → a
+      format-4 subtable.
+    </details>
+    <p class="check-note">Self-check above — or paste your records list to your tutor.</p>
   </div>
 
   <!-- ───────────────────────── DEEP-DIVE B: format 4 ───────────────────────── -->
@@ -402,7 +428,13 @@ glyphIdArray @ 12318 = 1 ,  + idDelta(0)         = gid 1   → glyph "A"  ✓
       (<code>"&gt;…h"</code>), and remember the 2-byte <code>reservedPad</code> after <code>endCode</code>.
       For the pointer path, the offset is measured from the address of <code>idRangeOffset[i]</code> itself.
     </details>
-    <p class="check-note">Paste your parser and the glyph id it produces — I'll check the arithmetic and cross-check.</p>
+    <details><summary>✓ Check your answer</summary>
+      For <code>永</code> (U+6C38): the correct result is <strong>gid 9078</strong> — confirm with
+      <code>font.getGlyphID('永') == 9078</code>. (A digit like <code>'5'</code> U+0035 takes the easy
+      <code>idRangeOffset==0</code> path: gid <code>= 0x35 + 210 = 263</code>.) The real test is that your
+      hand-computed gid matches <code>getGlyphID</code> for whatever character you chose.
+    </details>
+    <p class="check-note">Self-check above — or paste your parser/result to your tutor.</p>
   </div>
 
   <h2>Format 12: the sane redesign</h2>
@@ -492,7 +524,15 @@ gid = 3105 + (0x4E00 − 0x4DBE) = 3105 + 66 = 3171   → "u4E00"</code></pre>
       <code>font['cmap'].tables[0]</code>; <code>dir()</code> it too. <code>ttx</code> ships with
       fontTools (<code>~/.venv/bin/ttx</code> or <code>python -m fontTools.ttx</code>).
     </details>
-    <p class="check-note">Paste your three discoveries + the two outputs — I'll fill in anything you missed.</p>
+    <details><summary>✓ Check your answer</summary>
+      There's no single right answer, but the full public surface of <code>font['cmap']</code> is:
+      <code>tables, getBestCmap, getcmap, buildReversed, buildReversedMin, compile, decompile, toXML,
+      fromXML, tableVersion</code>. A subtable adds <code>cmap, format, platformID, platEncID, language,
+      length, isUnicode, isSymbol, getEncoding, compile, toXML</code>. Good "didn't know" picks:
+      <code>buildReversed()</code> (glyph→codepoints), <code>getcmap(3,1)</code> (one subtable),
+      <code>compile(font)</code> (back to bytes).
+    </details>
+    <p class="check-note">Self-check above — or paste your three discoveries to your tutor.</p>
   </div>
 
   <button class="complete-btn" id="mark-complete" data-module="2">Mark module complete</button>
