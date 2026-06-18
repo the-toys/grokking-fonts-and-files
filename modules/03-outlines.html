@@ -11,294 +11,255 @@
 <main>
   <p class="eyebrow">Module 03</p>
   <h1>Outlines</h1>
-  <p class="lede">A glyph isn't a picture — it's a set of <em>closed paths</em> the renderer fills.
-  In this font those paths are quadratic Bézier curves stored in <code>glyf</code> and located through
-  <code>loca</code>. We'll go from "what a contour is" all the way down to hand-decoding a real glyph's
-  bytes.</p>
-  <p class="legend">Exercises are <strong>interleaved</strong> — do each as you reach it. Programming
-  ones have a collapsible <strong>✓ Check your answer</strong>; concept ones have a solution.</p>
+  <p class="lede">A glyph is a set of <em>closed paths</em> the renderer fills. We'll build up in the
+  natural order: <strong>what stores the shapes (glyf)</strong>, <strong>how you find one glyph's data
+  (loca)</strong>, how the two work together, <strong>what the resulting numbers mean</strong>, and
+  finally <strong>how to decode the raw bytes by hand</strong>.</p>
+  <p class="legend">Exercises are <strong>interleaved</strong>. Concept ones have a solution; programming
+  ones have a collapsible <strong>✓ Check your answer</strong>.</p>
 
-  <!-- ───────────────────────── CONCEPT 1 ───────────────────────── -->
-  <span class="section-tag concept">concept</span>
-  <h2>How a glyph is drawn</h2>
+  <!-- ───────────────────────── 1. glyf ───────────────────────── -->
+  <span class="section-tag concept">concept · 1</span>
+  <h2>glyf — where the shapes live</h2>
+  <p>The <code>glyf</code> table is one big blob holding every glyph's outline, one variable-length
+  <strong>record per glyph</strong>, packed back to back. A record describes the glyph as
+  <strong>contours</strong> — closed loops of points — plus a bounding box. The renderer
+  <em>fills</em> the region those loops enclose; it doesn't just stroke them.</p>
+  <p>Which <em>kind</em> of curve those points describe is set by the font's technology, announced by the
+  sfnt magic from <a href="01-sfnt-container.html">Module 1</a>:</p>
+  <ul>
+    <li><strong>TrueType</strong> (this font, magic <code>00 01 00 00</code>): outlines in
+      <code>glyf</code>, made of <strong>quadratic</strong> curves. (We unpack what that means in step 4.)</li>
+    <li><strong>CFF / CFF2</strong> (magic <code>OTTO</code>): outlines in a <code>CFF&nbsp;</code> table
+      instead, made of <strong>cubic</strong> curves. No <code>glyf</code> at all.</li>
+  </ul>
+  <p>For now just hold this: <strong><code>glyf</code> = the outline data; one packed record per
+  glyph.</strong> The next question is how you find <em>one</em> glyph inside that 24.7&nbsp;MB blob.</p>
 
-  <p>A glyph <strong>outline</strong> is one or more <strong>closed contours</strong> — loops of
-  connected points. The renderer doesn't stroke the loops; it <strong>fills the region they
-  enclose</strong>. When contours nest (the hole in an 'O', the counter in '永'), a <strong>winding
-  rule</strong> decides what's inside: <strong>non-zero</strong> winding (the usual TrueType/PostScript
-  rule) or <strong>even-odd</strong>. Reverse an inner contour's direction and, under non-zero winding,
-  it punches a hole instead of adding ink.</p>
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.1</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Where do outlines live?</strong> Your font's sfnt magic is <code>00 01 00 00</code>. Which
+    table holds its outlines, and what kind of curves does it use? What table and curve kind would a font
+    with magic <code>OTTO</code> use instead?</p>
+    <details><summary>Show solution</summary>
+      <code>00 01 00 00</code> ⇒ TrueType ⇒ outlines in <code>glyf</code> (located via <code>loca</code>),
+      <strong>quadratic</strong> curves. <code>OTTO</code> ⇒ outlines in the <code>CFF&nbsp;</code> table,
+      <strong>cubic</strong> curves, and no <code>glyf</code>/<code>loca</code>.
+    </details>
+  </div>
 
-  <p>Every coordinate is in <strong>font units</strong> on the <strong>em square</strong>. Here
-  <code>unitsPerEm = 1000</code>, so <code>(110, 383)</code> means 110 units right, 383 up, on a
-  1000×1000 design grid. (How the em scales to pixels is all of <a href="04-metrics.html">Module 4</a>;
-  for now just read coordinates as positions on a 1000-unit grid.)</p>
+  <!-- ───────────────────────── 2. loca ───────────────────────── -->
+  <span class="section-tag concept">concept · 2</span>
+  <h2>loca — finding one glyph's bytes</h2>
+  <p>Because <code>glyf</code> records are <strong>variable length</strong> (a comma has a few points, a
+  CJK character hundreds) and packed with no separators, you can't jump to glyph <em>i</em> without a
+  map. That map is <code>loca</code> — an array of byte <strong>offsets</strong> into <code>glyf</code>,
+  one entry per glyph <strong>plus one</strong>:</p>
+<pre>loca:   [ off0 ][ off1 ][ off2 ] … [ offN ][ offN+1 ]      (N = numGlyphs, so N+1 entries)
+            │      │
+            │      └───────────────┐
+            └───────┐              │
+glyf:   [ glyph 0 ][   glyph 1   ][ glyph 2 ] …            (variable-length records, packed)
 
-  <!-- ───────────────────────── CONCEPT 2 ───────────────────────── -->
-  <span class="section-tag concept">concept</span>
-  <h2>Points, curves, and the two technologies</h2>
+        glyph i's bytes  =  glyf[ loca[i] : loca[i+1] ]</pre>
+  <p>Three consequences worth saying out loud:</p>
+  <ul>
+    <li><strong>Why N+1 entries:</strong> glyph <em>i</em> runs from <code>loca[i]</code> to
+      <code>loca[i+1]</code>, so the very last glyph needs an offset <em>after</em> it to mark its end.</li>
+    <li><strong>Empty glyphs:</strong> if <code>loca[i] == loca[i+1]</code> the glyph has zero bytes —
+      it draws nothing (e.g. the space character). Perfectly normal.</li>
+    <li><strong>Two storage formats:</strong> <code>head.indexToLocFormat</code> picks the entry size —
+      <strong>0</strong> = 16-bit "short" offsets stored as the real offset ÷ 2 (saves space, but only
+      reaches 128&nbsp;KB of glyf), <strong>1</strong> = 32-bit "long" offsets stored directly. This font
+      uses <strong>1</strong> (its glyf is 24.7&nbsp;MB — far past what short offsets could address).</li>
+  </ul>
 
-  <h3>First, what a Bézier curve actually is</h3>
-  <p>Before "on-curve / off-curve" can mean anything, you need the one idea underneath them. Start with a
-  straight line from <strong>A</strong> to <strong>B</strong>. Drop a third point <strong>C</strong> off
-  to one side and treat it as a <em>magnet</em>: bend the line so it bulges <em>toward</em> C, while still
-  starting exactly at A, ending exactly at B, and never quite reaching C. That bent line is a
-  <strong>quadratic Bézier curve</strong>.</p>
-<pre>          C ●   ← control point (the "magnet": the curve leans toward it, never touches)
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.2</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Count loca, and read a gap.</strong> This font has <code>numGlyphs = 46830</code>. (a) How
+    many <code>loca</code> entries are there and why the extra one? (b) If <code>loca[40] == loca[41]</code>,
+    what does that tell you about glyph 40?</p>
+    <details><summary>Show solution</summary>
+      (a) <strong>46831</strong> — glyph <em>i</em> spans <code>loca[i]…loca[i+1]</code>, so you need one
+      offset past the last glyph (46829) to bound it. (b) Glyph 40 has <strong>zero bytes</strong> — an
+      empty glyph that draws nothing (like a space).
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 3. together ───────────────────────── -->
+  <span class="section-tag walk">walkthrough · 3</span>
+  <h2>glyf + loca together (and our first real coordinates)</h2>
+  <p>Put them together to fetch one glyph. Take '一' (U+4E00). First codepoint → glyph id (via the
+  <code>cmap</code> from Module 2), then glyph id → byte range (via <code>loca</code>):</p>
+<pre><code>name  = getBestCmap()[0x4E00]   = "u4E00"
+gid   = getGlyphID(name)        = 3171
+loca[3171]   = 931382      ┐  glyph 3171's bytes are
+loca[3172]   = 931454      ┘  glyf[931382 : 931454]  →  72 bytes long</code></pre>
+  <p>Those 72 bytes <em>are</em> the outline. fontTools decodes them into a tidy object so you can read
+  the shape without touching bytes yet:</p>
+<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+font = TTFont(path)
+g = font[<span class="str">"glyf"</span>][<span class="str">"u4E00"</span>]
+g.numberOfContours      <span class="cmt"># 1   (&gt;0 simple glyph, -1 composite)</span>
+g.coordinates           <span class="cmt"># [(110,383), (837,420), (861,422), …]  21 points</span>
+g.flags                 <span class="cmt"># parallel bytes; bit0 (&amp; 1) = on-curve</span>
+g.endPtsOfContours      <span class="cmt"># [20]  last point index of each contour</span></code></pre>
+  <p>So glyph '一' is <strong>1 contour, 21 points</strong>, and its first few coordinates are
+  <code>(110,383) (837,420) (861,422) (881,430) …</code>. Those raw numbers are what step 4 makes sense
+  of. (And yes — this is exactly the navigation the table directory does for the whole file, one level
+  down: an index of offsets pointing into a packed blob.)</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.3</span><span class="x-kind code">programming</span></div>
+    <p><strong>Measure a glyph from loca.</strong> Find the glyph id for '一' (U+4E00), read
+    <code>loca</code>, and compute the glyph's byte length as <code>loca[gid+1] − loca[gid]</code>. Print
+    the gid, both offsets, and the length.</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      <code>font.getGlyphID("u4E00")</code> gives the gid; <code>font["loca"]</code> indexes like a list
+      of byte offsets (numGlyphs+1 of them). Length = the gap between consecutive entries.
+    </details>
+    <details><summary>✓ Check your answer</summary>
+      gid <strong>3171</strong>; <code>loca[3171]=931382</code>, <code>loca[3172]=931454</code>; length
+      <strong>72</strong> bytes.
+    </details>
+    <p class="check-note">Self-check above — or paste the numbers to your tutor.</p>
+  </div>
+
+  <!-- ───────────────────────── 4. what the coords mean ───────────────────────── -->
+  <span class="section-tag concept">concept · 4</span>
+  <h2>What each coordinate means</h2>
+  <p>Now the payoff. We have a list of points like <code>(110, 383)</code> and a flag per point. Two
+  things to decode: <em>where</em> a point is, and <em>what role</em> it plays.</p>
+
+  <h3>Where: font units on the em square</h3>
+  <p>Coordinates are in <strong>font units</strong> on the <strong>em square</strong>. Here
+  <code>unitsPerEm = 1000</code>, so <code>(110, 383)</code> is 110 units right, 383 up, on a 1000×1000
+  design grid (x → right, y → up; the baseline is y = 0). How that grid scales to pixels is all of
+  <a href="04-metrics.html">Module 4</a>; for now just read points as positions on a 1000-unit grid.</p>
+
+  <h3>Role: on-curve vs off-curve — and what a Bézier curve is</h3>
+  <p>Each point's flag bit 0 marks it <strong>on-curve</strong> or <strong>off-curve</strong>. To see why
+  that matters, here's the one idea underneath: start with a straight line from <strong>A</strong> to
+  <strong>B</strong>, then drop a third point <strong>C</strong> off to the side and treat it as a
+  <em>magnet</em> — bend the line so it bulges toward C, while still starting at A, ending at B, and never
+  reaching C. That bent line is a <strong>quadratic Bézier curve</strong>.</p>
+<pre>          C ●   ← off-curve "control" (the magnet: curve leans toward it, never touches)
          ·     ·
        ·         ·          ← the actual curve
   A ●·             ·● B
   on-curve          on-curve   (the curve DOES pass through A and B)</pre>
-  <p>Two kinds of point fall out — and this is the entire vocabulary of glyph outlines:</p>
   <ul>
-    <li><strong>On-curve points</strong> (A, B) — the path passes <em>through</em> them. Also called
-      <strong>anchors</strong>: the outline is pinned to them. (So "point 0 = anchor" just means point 0
-      is on-curve.)</li>
-    <li><strong>Off-curve points</strong> (C) — the path only <em>leans toward</em> them. Also called
-      <strong>control points</strong>: C far out → big bulge; C on the A–B line → no bulge (straight).</li>
+    <li><strong>On-curve points</strong> (A, B) — the path passes <em>through</em> them; also called
+      <strong>anchors</strong> (the outline is pinned to them).</li>
+    <li><strong>Off-curve points</strong> (C) — the path only <em>leans toward</em> them; also called
+      <strong>control points</strong>. C far out → big bulge; C on the A–B line → straight.</li>
   </ul>
-  <p><strong>Quadratic vs cubic is just how many magnets per segment:</strong> a <strong>quadratic</strong>
-  has <strong>one</strong> control point (a simple arc — <em>TrueType</em>); a <strong>cubic</strong> has
-  <strong>two</strong>, one near each end (enough for an S-curve in one segment — <em>CFF/PostScript</em>).
-  A quadratic can't make an S in one segment, so TrueType chains several — which is why TrueType glyphs
-  carry more points than CFF for the same shape.</p>
-  <p>A contour is then just a loop of anchors with control points between: two adjacent anchors
-  (<code>1 1</code>) = a straight edge; anchor–control–anchor (<code>1 0 1</code>) = one curved segment;
-  two controls in a row (<code>0 0</code>) = TrueType invents an anchor at their midpoint (next section).</p>
+  <p><strong>Quadratic vs cubic = how many magnets per segment:</strong> quadratic has <strong>one</strong>
+  control point (TrueType); cubic has <strong>two</strong>, one near each end (CFF), enough for an S-curve
+  in a single segment. A quadratic can't make an S in one go, so TrueType chains several — why TrueType
+  glyphs carry more points than CFF for the same shape.</p>
 
-  <h3>The two technologies</h3>
-  <p>Which curve math a font uses is announced by its sfnt magic from
-  <a href="01-sfnt-container.html">Module 1</a>:</p>
+  <h3>Reading a flag string</h3>
+  <p>A contour is a loop of these points. The on-curve flags tell you the segments:</p>
   <ul>
-    <li><strong>TrueType</strong> (this font — magic <code>00 01 00 00</code>): <strong>quadratic</strong>
-      Béziers. Outlines in <code>glyf</code>, located via <code>loca</code>. Each point carries a flag:
-      <strong>on-curve</strong> (an anchor the path passes through) or <strong>off-curve</strong> (a
-      quadratic <em>control point</em> that bends the curve toward it without being touched).</li>
-    <li><strong>CFF / CFF2</strong> (PostScript-flavoured OTF — magic <code>OTTO</code>):
-      <strong>cubic</strong> Béziers, stored in a <code>CFF&nbsp;</code> table (trailing space — still a
-      4-byte tag). No <code>glyf</code>/<code>loca</code>.</li>
+    <li><code>1 1</code> — two anchors in a row, no magnet between ⇒ a <strong>straight edge</strong>.</li>
+    <li><code>1 0 1</code> — anchor, control, anchor ⇒ <strong>one curved segment</strong>.</li>
+    <li><code>… 0 0 …</code> — two off-curve points in a row ⇒ TrueType <strong>implies an on-curve
+      point at their midpoint</strong>, so a run of controls becomes a smooth chain of arcs.</li>
   </ul>
-
-  <div class="callout key">
-    <span class="label">Quadratic vs cubic, in one line</span>
-    A <strong>quadratic</strong> segment has <strong>one</strong> control point; a <strong>cubic</strong>
-    has <strong>two</strong>. Cubics express an S-curve in one segment (CFF often needs fewer points);
-    TrueType compensates with cheaper math and the "implied on-curve point" trick below. Same shapes,
-    two encodings.
-  </div>
-
-  <h3>The implied on-curve point (TrueType)</h3>
-  <p>The shortcut that trips up everyone: when <strong>two off-curve points sit next to each
-  other</strong>, an on-curve point is <strong>implied at their exact midpoint</strong>. The font
-  stores fewer anchors; the renderer reconstructs them. So a run of off-curve points isn't one
-  impossible mega-curve — it's a chain of quadratic segments joined at implied midpoints.</p>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">3.1</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Classify points.</strong> The first six points of '一' (U+4E00) have on-curve flags
-    <code>1 1 0 0 0 0</code> with coordinates
-    <code>(110,383) (837,420) (861,422) (881,430) (893,430) (921,413)</code>. Label points 0–5 as
-    <em>anchor</em> or <em>control</em>, and say what the two adjacent off-curve points <strong>2 and
-    3</strong> imply about the path between them.</p>
-    <details><summary>Show solution</summary>
-      0 = anchor, 1 = anchor, 2–5 = control. Points 2 and 3 are both off-curve and adjacent, so TrueType
-      implies an on-curve point at their midpoint <code>((861+881)/2, (422+430)/2) = (871, 426)</code>;
-      the curve passes through it, splitting 2→3 into two quadratic segments rather than one impossible
-      two-control curve.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">3.2</span><span class="x-kind concept">concept</span></div>
-    <p><strong>TrueType vs CFF.</strong> For each: control points per segment, which table(s) hold the
-    outlines, and which sfnt magic signals it.</p>
-    <details><summary>Show solution</summary>
-      <strong>TrueType:</strong> quadratic = <strong>1</strong> control point; <code>glyf</code> indexed
-      by <code>loca</code>; magic <code>00 01 00 00</code>. <strong>CFF/CFF2:</strong> cubic =
-      <strong>2</strong>; the <code>CFF&nbsp;</code> table (no <code>glyf</code>/<code>loca</code>); magic
-      <code>OTTO</code>.
-    </details>
-  </div>
-
-  <!-- ───────────────────────── CONCEPT 3 ───────────────────────── -->
-  <span class="section-tag concept">concept</span>
-  <h2>loca, composites, hinting</h2>
-  <p><code>loca</code> is to <code>glyf</code> what the table directory was to the file: an index of byte
-  offsets. Entry <em>i</em> and <em>i+1</em> give the start and end of glyph <em>i</em>'s data inside
-  <code>glyf</code> — so <code>loca</code> holds <strong>numGlyphs + 1</strong> entries (you need the
-  offset <em>after</em> the last glyph to bound it). If <code>loca[i] == loca[i+1]</code>, glyph <em>i</em>
-  has zero bytes — an <strong>empty glyph</strong> like space. <code>head.indexToLocFormat</code> picks
-  the entry size: <strong>0</strong> = 16-bit short offsets (stored as offset ÷ 2), <strong>1</strong> =
-  32-bit long offsets stored directly.</p>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">3.3</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Count loca entries.</strong> This font's <code>numGlyphs = 46830</code>. How many
-    <code>loca</code> entries, and why the extra one?</p>
-    <details><summary>Show solution</summary>
-      <strong>46831</strong>. Glyph <em>i</em> spans <code>loca[i]…loca[i+1]</code>, so you need one
-      offset past the last glyph (46829) to bound it — hence numGlyphs + 1.
-    </details>
-  </div>
-
-  <h3>Composite glyphs</h3>
-  <p>A glyph need not draw its own outline. A <strong>composite</strong> is built from
-  <strong>references to other glyphs</strong> (components), each placed with an <strong>offset</strong>
-  and optionally a scale/2×2 transform. 'Ä' = "draw 'A', then the dieresis shifted up". Huge for
-  <strong>CJK</strong> (thousands of characters share <strong>radicals</strong>) and <strong>accented
-  Latin</strong> (base + combining mark). It saves <strong>space</strong> (one outline, many refs) and
-  enforces <strong>visual consistency</strong> (every accent is literally the same shape).</p>
-
-  <div class="callout">
-    <span class="label">Hinting, briefly</span>
-    At tiny sizes a stem can blur or vanish. The <code>prep</code>/<code>fpgm</code> programs (TrueType
-    bytecode) plus <code>gasp</code> control <em>grid-fitting</em> — nudging points onto pixel
-    boundaries. WenKai's <code>prep</code> is just 7 bytes (Module 1), and modern antialiased rendering
-    leans on hinting far less than 1990s 1-bit displays did. Know it exists; don't overstate it.
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">3.4</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Why composites.</strong> Why are they especially valuable for CJK and accented Latin?
-    Name the <strong>two</strong> things they save.</p>
-    <details><summary>Show solution</summary>
-      <strong>Space</strong> and <strong>visual consistency</strong>: store a shared radical / base /
-      mark once and reference it with a placement offset, instead of duplicating thousands of outlines;
-      and because every reference points at the same outline, the shape is identical everywhere.
-    </details>
-  </div>
-
-  <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
-  <span class="section-tag walk">walkthrough</span>
-  <h2>Reading real outlines from WenKai</h2>
-
-  <p>This font's <code>head.indexToLocFormat = 1</code>, so <code>loca</code> uses 32-bit long offsets —
-  direct byte offsets into <code>glyf</code> (which is 24.7&nbsp;MB, so 16-bit couldn't reach anyway).</p>
-
-  <h3>'一' (U+4E00) — an off-curve run</h3>
-  <p>"One", a single horizontal stroke: <code>numberOfContours=1</code>, <strong>21 points</strong>,
-  <code>endPtsOfContours=[20]</code>. First six points:</p>
-<pre><code>point:   0        1        2        3        4        5
-coord:  (110,383)(837,420)(861,422)(881,430)(893,430)(921,413)
-onCurve:  1        1        0        0        0        0
-          └anchor  └anchor  └────── off-curve run ──────┘</code></pre>
-  <ul>
-    <li><strong>0 → 1</strong>: two on-curve anchors in a row ⇒ a <strong>straight line</strong> (no
-      control point between) — the long top edge.</li>
-    <li><strong>2–5</strong>: a run of four control points. Implied midpoints between each adjacent pair
-      turn it into chained quadratic segments rounding the stroke's right end. The path never touches
-      2–5; they only pull it.</li>
-  </ul>
+  <p>So '一''s first six flags <code>1 1 0 0 0 0</code> read as: anchor, anchor (the straight top edge),
+  then a run of four controls (the rounded right end), with implied midpoints between them. Here it is
+  literally, on the em square:</p>
 
   <figure>
     <img src="../specimens/yi-first6-points.png"
          alt="The first six points of U+4E00 plotted on the em square, anchors and controls colour-coded">
-    <figcaption><strong>The first six points of '一' on the 1000×1000 em square</strong> (x → right,
-    y → up). Blue circles are the two on-curve <em>anchors</em> (0, 1); red squares are the four off-curve
-    <em>controls</em> (2–5). <em>Left:</em> the whole em square — anchor 0 is far left, the rest cluster
-    at the stroke's right end. <em>Right:</em> a zoom showing the actual curve bowing toward the controls
-    and never touching them, with the implied on-curve midpoints (grey) where the quadratic segments join.</figcaption>
+    <figcaption><strong>'一', first six points</strong> (x → right, y → up). Blue circles = on-curve
+    anchors (0, 1); red squares = off-curve controls (2–5). <em>Left:</em> the full em square — anchor 0
+    far left, the rest clustered at the stroke's right end. <em>Right:</em> a zoom showing the curve bow
+    toward the controls without touching them, joined at the implied on-curve midpoints (grey).</figcaption>
   </figure>
 
-  <h3>'十' (U+5341) and the composite dieresis</h3>
-  <p>"Ten" — a cross: 1 contour, <strong>46 points</strong>, flags beginning <code>1 1 0 1 0 1</code>
-  (an alternating anchor/control rhythm — straighter strokes with single curves at the corners). And the
-  spacing <strong>dieresis</strong> (¨) is a <strong>composite</strong>: it has <em>no outline of its
-  own</em> — its whole record is "draw the <code>dieresiscomb</code> glyph, shifted to (500, 0)". One
-  outline, reused.</p>
+  <h3>Contours, holes, and winding</h3>
+  <p>A glyph can have several contours. When they nest — the bowl of an 'O', the counter of '永' — a
+  <strong>winding rule</strong> decides what's inside: <strong>non-zero</strong> winding (the usual
+  TrueType rule) treats a contour wound the opposite way as a <em>hole</em>. Here are four real glyphs,
+  points colour-coded the same way:</p>
 
-  <h3>More examples: on/off-curve across shapes</h3>
   <figure>
     <img src="../specimens/glyph-points-gallery.png"
          alt="Four glyphs with on-curve anchors and off-curve controls marked on the em square">
-    <figcaption>Four real outlines, points colour-coded the same way. <strong>'─'</strong>: four on-curve
-    corners, zero controls — a pure polygon, exactly the glyph we hand-parse in the deep-dive.
-    <strong>'one' (一)</strong> and <strong>'ten' (十)</strong>: anchors at stroke ends and corners,
-    controls bunched at the rounded brush ends. <strong>'O'</strong>: on-curve anchors sit at the four
-    extrema (top/bottom/left/right), off-curve controls shape the curve between them, and a second
-    <em>inner</em> contour carves the counter — the hole is "inside" only because the non-zero winding
-    rule (Concept 1) counts it that way. Notice curves always come from <em>off-curve</em> points;
-    straight edges have <em>none</em>.</figcaption>
+    <figcaption><strong>'─'</strong>: four on-curve corners, zero controls — a pure polygon.
+    <strong>'one' (一)</strong> / <strong>'ten' (十)</strong>: anchors at ends and corners, controls
+    bunched at the rounded brush ends. <strong>'O'</strong>: anchors at the four extrema, controls shaping
+    the curve, and a second <em>inner</em> contour wound the other way that carves the counter — a hole
+    only because non-zero winding counts it as one. Curves always come from off-curve points; straight
+    edges have none.</figcaption>
   </figure>
 
-  <h3>Inspecting glyphs with fontTools</h3>
-  <p>The next two exercises are hands-on. Minimum tooling:</p>
-<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
-font = TTFont(path)
-g = font[<span class="str">"glyf"</span>][<span class="str">"u5341"</span>]   <span class="cmt"># a glyph by name</span>
-g.numberOfContours          <span class="cmt"># &gt;0 simple, -1 composite</span>
-g.coordinates               <span class="cmt"># list of (x, y) points</span>
-g.flags                     <span class="cmt"># parallel flag bytes; bit0 (&amp; 1) = on-curve</span>
-font.getGlyphID(<span class="str">"u4E00"</span>)     <span class="cmt"># glyph name -> integer GID</span>
-font[<span class="str">"loca"</span>]                <span class="cmt"># list-like: numGlyphs+1 byte offsets into glyf</span></code></pre>
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.4</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Classify points.</strong> '一''s first six points have flags <code>1 1 0 0 0 0</code> and
+    coordinates <code>(110,383) (837,420) (861,422) (881,430) (893,430) (921,413)</code>. Label points
+    0–5 as anchor or control, and give the implied on-curve point between points 2 and 3.</p>
+    <details><summary>Show solution</summary>
+      0, 1 = anchors; 2–5 = controls. Points 2 and 3 are adjacent off-curve points, so the implied
+      on-curve midpoint is <code>((861+881)/2, (422+430)/2) = (871, 426)</code>; the curve passes through
+      it, splitting 2→3 into two quadratic segments.
+    </details>
+  </div>
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">3.5</span><span class="x-kind code">programming</span></div>
-    <p><strong>Inspect '十'.</strong> Load the font, fetch glyph <code>'u5341'</code>, and print its
-    <code>numberOfContours</code>, total point count, and the counts of on-curve vs off-curve points.
-    Decide which flag bit separates them and count each yourself.</p>
+    <p><strong>Get the points, and render them.</strong> Load a glyph (try <code>'u5341'</code>, '十')
+    and (a) print its <code>numberOfContours</code>, total points, and on-curve/off-curve counts; (b)
+    render it — either replay it through a fontTools pen, or scatter <code>g.coordinates</code> with
+    matplotlib, colouring on-curve vs off-curve by <code>flag &amp; 1</code>. Eyeball it against the
+    gallery above.</p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
-      <code>g.coordinates</code> are the points, <code>g.flags</code> the parallel flag bytes; bit 0
-      (<code>fl &amp; 1</code>) is on-curve. Count over <code>g.flags</code>.
+      <code>g = font['glyf']['u5341']</code> gives <code>g.coordinates</code> and <code>g.flags</code>
+      (bit 0 = on-curve). For a filled render, <code>font.getGlyphSet()['u5341'].draw(pen)</code> with a
+      pen replays <code>moveTo/lineTo/qCurveTo/closePath</code>; for a quick scatter, just plot the
+      coordinates with two colours.
     </details>
     <details><summary>✓ Check your answer</summary>
-      <code>numberOfContours = 1</code>, <strong>46</strong> points, <strong>22 on-curve</strong>,
-      <strong>24 off-curve</strong>.
+      '十': <code>numberOfContours = 1</code>, <strong>46</strong> points, <strong>22 on-curve</strong>,
+      <strong>24 off-curve</strong> — a cross, anchors at the corners, controls at the rounded ends.
     </details>
-    <p class="check-note">Self-check above — or paste your code/output to your tutor.</p>
+    <p class="check-note">Self-check above — or paste your counts + render to your tutor.</p>
   </div>
 
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">3.6</span><span class="x-kind code">programming</span></div>
-    <p><strong>Measure '一' from <code>loca</code>.</strong> Find the glyph ID for '一' (U+4E00), read
-    <code>loca</code>, and compute the glyph's byte length as <code>loca[gid+1] − loca[gid]</code>. Print
-    the GID, both offsets, and the length; confirm it's nonzero.</p>
-    <details><summary>Stuck? a nudge (no full solution)</summary>
-      <code>font.getGlyphID("u4E00")</code> gives the GID; <code>font["loca"]</code> indexes like a list
-      of byte offsets (numGlyphs+1 of them). The length is the gap between consecutive entries.
-    </details>
-    <details><summary>✓ Check your answer</summary>
-      GID <strong>3171</strong>; <code>loca[3171] = 931382</code>, <code>loca[3172] = 931454</code>;
-      length <strong>72</strong> bytes (nonzero — real outline data).
-    </details>
-    <p class="check-note">Self-check above — or paste the four numbers to your tutor.</p>
-  </div>
-
-  <!-- ───────────────────────── DEEP-DIVE A: navigate ───────────────────────── -->
-  <span class="section-tag binary">binary deep-dive</span>
-  <h2>First: navigate via loca to a glyph's bytes</h2>
-  <p>To hand-parse a glyph you must first <em>find</em> it — and a 21-point glyph like '一' is a lot to
-  decode by hand, so we'll use the smallest real glyph that still shows everything: <strong>'─'
-  (U+2500)</strong>, a single 4-point rectangle (a horizontal box-drawing bar). The navigation chain,
-  using the table offsets from Module 1 (<code>glyf @ 592352</code>, <code>loca @ 405028</code>):</p>
-<pre><code>name         = getBestCmap()[0x2500]        = "boxdrawingslighthorizontal"
-gid          = getGlyphID(name)             = 869
-loca[869]    = 153477   (long/32-bit offset into glyf)
-loca[870]    = 153501
-glyph length = 153501 − 153477             = 24 bytes
-file offset  = glyf_base + loca[869]
-             = 592352 + 153477             = 745829</code></pre>
-  <p class="legend">Note glyph names vary — <code>'─'</code> is <strong>not</strong> "u2500"; resolve
-  the name through the cmap (<code>getBestCmap()[0x2500]</code>) rather than assuming it. <code>'一'</code>
-  happens to be "u4E00", but that pattern isn't guaranteed.</p>
-  <p>The 24 raw bytes at that offset:</p>
+  <!-- ───────────────────────── 5. hand-parse ───────────────────────── -->
+  <span class="section-tag binary">binary deep-dive · 5</span>
+  <h2>Hand-parsing a glyph's bytes</h2>
+  <p>We've used the library; now decode the raw bytes ourselves. '一' has 21 points (a lot to do by
+  hand), so we'll use the smallest real glyph that still shows everything: <strong>'─' (U+2500)</strong>,
+  a single 4-point rectangle. First navigate to its bytes (table offsets from Module 1:
+  <code>glyf @ 592352</code>, <code>loca @ 405028</code>):</p>
+<pre><code>name         = getBestCmap()[0x2500]   = "boxdrawingslighthorizontal"   (not "u2500"!)
+gid          = getGlyphID(name)        = 869
+loca[869]    = 153477                   ┐ length = 153501 − 153477 = 24 bytes
+loca[870]    = 153501                   ┘ file offset = 592352 + 153477 = 745829</code></pre>
+  <p class="legend">Note glyph names vary — resolve via the cmap (<code>getBestCmap()[0x2500]</code>)
+  rather than assuming "u2500". '一' happens to be "u4E00", but that pattern isn't guaranteed.</p>
+  <p>The 24 raw bytes:</p>
 <pre class="bytemap"><span class="b f0">00 01</span> <span class="b f1">00 00 01 68 03 e8 01 90</span> <span class="b f2">00 03</span> <span class="b f3">00 00</span> <span class="b f4">11 35 21 15</span> <span class="b f0">03 e8 01 68 28 28</span></pre>
   <p class="legend"><span class="b f0">numberOfContours</span> · <span class="b f1">bounding box</span> ·
   <span class="b f2">endPtsOfContours</span> · <span class="b f3">instructionLength</span> ·
   <span class="b f4">flags</span> · <span class="b f0">coordinates</span></p>
 
-  <h2>Hand-parsing the glyph header</h2>
+  <h3>The glyph header</h3>
   <table>
     <tr><th class="mono">bytes</th><th>field</th><th>value</th><th>meaning</th></tr>
     <tr><td class="mono">00 01</td><td>numberOfContours</td><td class="mono">1</td><td>≥0 ⇒ simple glyph (−1 ⇒ composite)</td></tr>
     <tr><td class="mono">00 00 01 68 03 e8 01 90</td><td>xMin yMin xMax yMax</td><td class="mono">0, 360, 1000, 400</td><td>bounding box (int16 each)</td></tr>
     <tr><td class="mono">00 03</td><td>endPtsOfContours[0]</td><td class="mono">3</td><td>contour ends at point 3 ⇒ <strong>4 points</strong></td></tr>
-    <tr><td class="mono">00 00</td><td>instructionLength</td><td class="mono">0</td><td>no hinting bytecode for this glyph</td></tr>
+    <tr><td class="mono">00 00</td><td>instructionLength</td><td class="mono">0</td><td>no hinting bytecode</td></tr>
   </table>
 
-  <h2>The compressed bit: flags &amp; coordinates</h2>
-  <p>After the header come the <strong>flags</strong> (one per point, but run-length compressible) and
-  then the <strong>coordinates</strong>. The flag byte is a bitfield:</p>
+  <h3>Flags &amp; the delta-coded coordinates</h3>
+  <p>After the header come the flags (one per point, run-length compressible), then the coordinates. The
+  flag byte is a bitfield:</p>
   <table class="mono">
     <tr><th>bit</th><th>mask</th><th>name</th><th>meaning</th></tr>
     <tr><td>0</td><td>0x01</td><td>ON_CURVE</td><td>1 = on-curve anchor, 0 = off-curve control</td></tr>
@@ -308,34 +269,19 @@ file offset  = glyf_base + loca[869]
     <tr><td>4</td><td>0x10</td><td>X_SAME / +</td><td><strong>dual:</strong> if X_SHORT → sign (1=+, 0=−); else → x delta is 0 (same as prev)</td></tr>
     <tr><td>5</td><td>0x20</td><td>Y_SAME / +</td><td><strong>dual:</strong> if Y_SHORT → sign; else → y delta is 0</td></tr>
   </table>
-
-  <p>Our four flag bytes <code>11 35 21 15</code> (no REPEAT bit set, so one byte per point):</p>
-  <table class="mono">
-    <tr><th>pt</th><th>flag</th><th>bits set</th><th>on-curve?</th></tr>
-    <tr><td>0</td><td>0x11</td><td>ON_CURVE, X_SAME/+</td><td>yes</td></tr>
-    <tr><td>1</td><td>0x35</td><td>ON_CURVE, Y_SHORT, X_SAME/+, Y_SAME/+</td><td>yes</td></tr>
-    <tr><td>2</td><td>0x21</td><td>ON_CURVE, Y_SAME/+</td><td>yes</td></tr>
-    <tr><td>3</td><td>0x15</td><td>ON_CURVE, Y_SHORT, X_SAME/+</td><td>yes</td></tr>
-  </table>
-
+  <p>Our four flag bytes <code>11 35 21 15</code> (no REPEAT bit, so one per point): all four have bit 0
+  set ⇒ <strong>all on-curve</strong>. Coordinates follow three rules:</p>
   <div class="callout key">
     <span class="label">Three rules that make coordinates tiny</span>
-    <strong>(1) Deltas:</strong> each coordinate is stored relative to the <em>previous</em> point (the
-    first relative to origin 0). <strong>(2) All-X-then-all-Y:</strong> every x delta is stored first,
-    then every y delta — not interleaved. <strong>(3) Variable width per flag:</strong> if the SHORT bit
-    is set → 1 byte (sign from the SAME/+ bit); else if the SAME/+ bit is set → <em>0 bytes</em> (delta
-    = 0); else → a 2-byte signed int16. That's why the same/zero deltas in our glyph cost nothing.
+    <strong>(1) Deltas:</strong> each coordinate is relative to the <em>previous</em> point (first
+    relative to origin 0). <strong>(2) All-X-then-all-Y:</strong> every x delta first, then every y delta
+    — not interleaved. <strong>(3) Variable width:</strong> SHORT bit → 1 byte (sign from the SAME/+ bit);
+    else SAME/+ bit → <em>0 bytes</em> (delta 0); else a 2-byte signed int16.
   </div>
-
-  <p>Decoding the trailing <code>03 e8 01 68 28 28</code> — x deltas first (4 of them), then y deltas:</p>
-<pre><code>X (flags say: pt0 SAME→0, pt1 SAME→0, pt2 int16, pt3 SAME→0)
-   pt2 int16 = 03 e8 = +1000      ⇒ x = 0, 0, 1000, 1000     (consumes "03 e8")
-Y (pt0 int16, pt1 SHORT +, pt2 SAME→0, pt3 SHORT −)
-   pt0 int16 = 01 68 = +360
-   pt1 short = 28 = +40           (Y_SHORT set, Y_SAME/+ set ⇒ positive)
-   pt3 short = 28 = −40           (Y_SHORT set, Y_SAME/+ clear ⇒ negative)
-                                   ⇒ y = 360, 400, 400, 360  (consumes "01 68 28 28")</code></pre>
-
+  <p>Decoding the trailing <code>03 e8 01 68 28 28</code> — x deltas first, then y:</p>
+<pre><code>X: pt0 SAME→0, pt1 SAME→0, pt2 int16 03 e8 = +1000, pt3 SAME→0   ⇒ x = 0, 0, 1000, 1000
+Y: pt0 int16 01 68 = +360, pt1 short 28 = +40 (SAME/+ set ⇒ +),
+   pt2 SAME→0, pt3 short 28 = −40 (SAME/+ clear ⇒ −)            ⇒ y = 360, 400, 400, 360</code></pre>
   <table class="mono">
     <tr><th>point</th><th>(x, y)</th><th>on-curve</th></tr>
     <tr><td>0</td><td>(0, 360)</td><td>yes</td></tr>
@@ -343,20 +289,20 @@ Y (pt0 int16, pt1 SHORT +, pt2 SAME→0, pt3 SHORT −)
     <tr><td>2</td><td>(1000, 400)</td><td>yes</td></tr>
     <tr><td>3</td><td>(1000, 360)</td><td>yes</td></tr>
   </table>
-  <p>Four on-curve corners ⇒ a filled rectangle from <code>(0,360)</code> to <code>(1000,400)</code>: a
-  full-width bar 40 units tall at mid-height — exactly <strong>'─'</strong>. All 24 bytes accounted for,
-  and it matches the bounding box in the header.</p>
+  <p>Four on-curve corners ⇒ a filled rectangle <code>(0,360)→(1000,400)</code>: a full-width bar 40
+  units tall at mid-height — exactly <strong>'─'</strong>, matching the header's bounding box. All 24
+  bytes accounted for.</p>
 
   <div class="callout warn">
     <span class="label">The two traps</span>
     Coordinates are <strong>all-X-then-all-Y</strong> (read every x delta before any y), and bits 4/5 are
-    <strong>context-dependent</strong> — they mean "sign" when the matching SHORT bit is set, but "delta
-    is zero / same as previous" when it isn't. Treat them as a fixed meaning and your coordinates drift.
+    <strong>context-dependent</strong> — "sign" when the matching SHORT bit is set, "delta is zero" when
+    it isn't. Treat them as one fixed meaning and your coordinates drift.
   </div>
 
-  <h2>A composite glyph in bytes: dieresis</h2>
-  <p>The spacing dieresis has <code>numberOfContours = −1</code> (the composite signal), then one
-  component record:</p>
+  <h3>A composite in bytes: dieresis</h3>
+  <p>A composite glyph draws no outline of its own — it places <em>other</em> glyphs. The spacing
+  dieresis has <code>numberOfContours = −1</code>, then one component record:</p>
 <pre class="bytemap"><span class="b f0">ff ff</span> <span class="b f1">00 6c 02 50 01 88 02 bd</span> <span class="b f2">00 07</span> <span class="b f3">a4 67</span> <span class="b f4">01 f4 00 00</span></pre>
   <table>
     <tr><th class="mono">bytes</th><th>field</th><th>value</th></tr>
@@ -366,26 +312,27 @@ Y (pt0 int16, pt1 SHORT +, pt2 SAME→0, pt3 SHORT −)
     <tr><td class="mono">a4 67</td><td>glyphIndex</td><td class="mono">42087 = "dieresiscomb"</td></tr>
     <tr><td class="mono">01 f4 00 00</td><td>arg1, arg2 (xy)</td><td class="mono">(500, 0) placement offset</td></tr>
   </table>
-  <p>No <code>MORE_COMPONENTS</code> bit ⇒ it's the only component. So the entire glyph is "place
-  <code>dieresiscomb</code> at (500, 0)" — the composite mechanism in its smallest form.</p>
+  <p>No <code>MORE_COMPONENTS</code> bit ⇒ the only component. The whole glyph is "place
+  <code>dieresiscomb</code> at (500, 0)". <strong>That's why composites matter</strong> for CJK (share a
+  radical) and accented Latin (base + mark): store one outline, reference it many times — saving space and
+  keeping every copy visually identical.</p>
 
   <div class="exercise">
-    <div class="x-head"><span class="x-id">3.7</span><span class="x-kind code">programming</span></div>
-    <p><strong>Hand-parse a glyph outline from raw bytes.</strong> Without using
-    <code>g.coordinates</code>, pull a simple glyph's raw bytes, parse the header, the flags (mind the
-    REPEAT bit), and the delta-encoded coordinates yourself, and reconstruct the absolute points. Verify
-    against <code>g.coordinates</code>. Use <code>'─'</code> (U+2500) for a clean start, or a slightly
-    bigger glyph for a challenge.</p>
+    <div class="x-head"><span class="x-id">3.6</span><span class="x-kind code">programming</span></div>
+    <p><strong>Hand-parse a glyph outline.</strong> Without using <code>g.coordinates</code>, pull a
+    simple glyph's raw bytes, parse the header, the flags (mind REPEAT), and the delta-coded coordinates,
+    and reconstruct the absolute points. Verify against <code>g.coordinates</code>. Use <code>'─'</code>
+    for a clean start.</p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
-      Get the bytes via <code>g = font['glyf']['name']; raw = g.compile(font['glyf'])</code> (or seek in
-      the file using <code>loca</code>). Header is <code>int16</code> numberOfContours + 4×<code>int16</code>
-      bbox; then <code>numberOfContours</code> <code>uint16</code> endpoints; then a <code>uint16</code>
-      instructionLength and that many instruction bytes; then flags (expand REPEAT); then all x deltas,
-      then all y deltas, widths driven by the SHORT / SAME bits. Accumulate deltas from 0.
+      Bytes via <code>raw = g.compile(font['glyf'])</code> (or seek in the file with <code>loca</code>).
+      Header: <code>int16</code> numberOfContours + 4×<code>int16</code> bbox; then numberOfContours
+      <code>uint16</code> endpoints; <code>uint16</code> instructionLength + that many instruction bytes;
+      flags (expand REPEAT); then all x deltas, then all y deltas, widths from the SHORT/SAME bits;
+      accumulate from 0.
     </details>
     <details><summary>✓ Check your answer (for '─')</summary>
-      4 points, all on-curve: <code>(0,360) (0,400) (1000,400) (1000,360)</code> — a rectangle matching
-      the bbox <code>(0,360)…(1000,400)</code>.
+      4 on-curve points <code>(0,360) (0,400) (1000,400) (1000,360)</code> — a rectangle matching the
+      bbox <code>(0,360)…(1000,400)</code>.
     </details>
     <p class="check-note">Self-check above — or paste your parser + points to your tutor.</p>
   </div>
@@ -393,57 +340,43 @@ Y (pt0 int16, pt1 SHORT +, pt2 SAME→0, pt3 SHORT −)
   <!-- ───────────────────────── TOOLING ───────────────────────── -->
   <span class="section-tag tool">tooling &amp; introspection</span>
   <h2>Exploring outlines yourself</h2>
-  <p>Same recipe as before — <code>type</code> / <code>dir</code> / <code>help</code>. A glyph object
-  (<code>font['glyf']['u4E00']</code>) exposes:</p>
-  <table>
-    <tr><th class="mono">member</th><th>what it gives</th></tr>
-    <tr><td class="mono">.numberOfContours</td><td>≥0 simple, −1 composite</td></tr>
-    <tr><td class="mono">.coordinates / .flags</td><td>the points and their parallel flag bytes</td></tr>
-    <tr><td class="mono">.endPtsOfContours</td><td>last point index of each contour</td></tr>
-    <tr><td class="mono">.isComposite()</td><td>True for component-based glyphs</td></tr>
-    <tr><td class="mono">.getComponentNames(glyf)</td><td>component glyph names (composites)</td></tr>
-    <tr><td class="mono">.draw(pen) / .drawPoints(pen)</td><td>replay the outline into a <em>pen</em> (see below)</td></tr>
-    <tr><td class="mono">.program</td><td>the hinting bytecode, if any</td></tr>
-    <tr><td class="mono">.compile(glyf)</td><td>serialize back to the raw bytes we hand-parsed</td></tr>
-  </table>
-
-  <p>The most useful idea here is the <strong>pen protocol</strong>: outlines are replayed as drawing
-  commands (<code>moveTo</code>, <code>lineTo</code>, <code>qCurveTo</code>, <code>closePath</code>) into
-  a "pen" object. <code>RecordingPen</code> captures them as a list; <code>BoundsPen</code> measures;
-  <code>SVGPathPen</code> emits SVG. It's how you turn raw points into something usable without
-  re-deriving the implied-midpoint math by hand:</p>
+  <p>Same <code>type</code>/<code>dir</code>/<code>help</code> recipe. A glyph object exposes
+  <code>.numberOfContours</code>, <code>.coordinates</code>, <code>.flags</code>,
+  <code>.endPtsOfContours</code>, <code>.isComposite()</code>, <code>.getComponentNames(glyf)</code>,
+  <code>.draw(pen)</code>/<code>.drawPoints(pen)</code>, <code>.program</code> (hinting), and
+  <code>.compile(glyf)</code> (back to the raw bytes).</p>
+  <p>The big idea here is the <strong>pen protocol</strong>: outlines are replayed as drawing commands
+  (<code>moveTo</code>, <code>lineTo</code>, <code>qCurveTo</code>, <code>closePath</code>) into a "pen".
+  <code>RecordingPen</code> captures them; <code>BoundsPen</code> measures; <code>SVGPathPen</code> emits
+  SVG. It turns raw points into something usable without redoing the implied-midpoint math:</p>
 <pre><code><span class="kw">from</span> fontTools.pens.recordingPen <span class="kw">import</span> RecordingPen
 pen = RecordingPen()
-name = font.getBestCmap()[<span class="num">0x2500</span>]        <span class="cmt"># "boxdrawingslighthorizontal" — not "u2500"!</span>
+name = font.getBestCmap()[<span class="num">0x2500</span>]        <span class="cmt"># "boxdrawingslighthorizontal"</span>
 font.getGlyphSet()[name].draw(pen)
-pen.value   <span class="cmt"># [('moveTo', ...), ('lineTo', ...), ('closePath', ())]</span></code></pre>
-
-  <h3>Command-line</h3>
+pen.value   <span class="cmt"># [('moveTo', …), ('lineTo', …), ('closePath', ())]</span></code></pre>
   <table>
     <tr><th>tool</th><th>use</th></tr>
-    <tr><td class="mono">ttx -t glyf font.ttf</td><td>dump glyf as XML — points, flags, components, readable</td></tr>
-    <tr><td class="mono">ttx -t loca font.ttf</td><td>(note: ttx folds loca into glyf; the offsets are implicit)</td></tr>
-    <tr><td class="mono">fontforge</td><td>open a glyph — its outline view shows on/off points directly</td></tr>
+    <tr><td class="mono">ttx -t glyf font.ttf</td><td>dump glyf as readable XML — points, flags, components</td></tr>
+    <tr><td class="mono">fontforge</td><td>open a glyph; its outline view shows on/off points directly</td></tr>
   </table>
 
   <div class="exercise">
-    <div class="x-head"><span class="x-id">3.8</span><span class="x-kind code">programming</span></div>
-    <p><strong>Replay an outline through a pen.</strong> Use a <code>RecordingPen</code> to capture the
-    drawing commands for <code>'─'</code> (U+2500) and for <code>'一'</code> (U+4E00). Compare: how does
-    the rectangle's command list differ from the one with curves? Which command represents the off-curve
-    run? Bonus: <code>dir()</code> the glyph object and name two members you hadn't used.</p>
+    <div class="x-head"><span class="x-id">3.7</span><span class="x-kind code">programming</span></div>
+    <p><strong>Replay outlines through a pen.</strong> Capture the drawing commands for <code>'─'</code>
+    (U+2500) and <code>'一'</code> (U+4E00) with a <code>RecordingPen</code>. How does the rectangle's
+    command list differ from the one with curves? Which command carries the off-curve run? Bonus:
+    <code>dir()</code> the glyph object and name two members you hadn't used.</p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
       <code>gs = font.getGlyphSet(); gs[font.getBestCmap()[0x2500]].draw(pen)</code> fills
-      <code>pen.value</code> (the glyph name is "boxdrawingslighthorizontal", not "u2500"). Straight
-      edges show as <code>lineTo</code>; quadratic runs show as <code>qCurveTo</code> (fontTools
-      reconstructs the implied on-curve midpoints for you).
+      <code>pen.value</code> (the glyph name is "boxdrawingslighthorizontal"). Straight edges →
+      <code>lineTo</code>; quadratic runs → <code>qCurveTo</code> (fontTools rebuilds the implied
+      midpoints for you).
     </details>
     <details><summary>✓ Check your answer</summary>
-      '─' is all <code>moveTo</code> / <code>lineTo</code> / <code>closePath</code> (a polygon — no
-      curves). '一' contains a <code>qCurveTo</code> whose extra points are the off-curve controls; that
-      command is exactly the off-curve run from the walkthrough, with implied midpoints handled by the
-      pen. Useful members to discover: <code>getCoordinates</code>, <code>recalcBounds</code>,
-      <code>removeHinting</code>, <code>drawPoints</code>.
+      '─' is all <code>moveTo</code>/<code>lineTo</code>×3/<code>closePath</code> (a polygon, no curves);
+      '一' contains <code>qCurveTo</code> commands whose extra points are the off-curve controls. Useful
+      members to find: <code>getCoordinates</code>, <code>recalcBounds</code>, <code>removeHinting</code>,
+      <code>drawPoints</code>.
     </details>
     <p class="check-note">Self-check above — or paste your two command lists to your tutor.</p>
   </div>
