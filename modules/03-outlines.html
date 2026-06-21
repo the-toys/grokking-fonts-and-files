@@ -54,24 +54,31 @@
   <p>Because <code>glyf</code> records are <strong>variable length</strong> (a comma has a few points, a
   CJK character hundreds) and packed with no separators, you can't jump to glyph <em>i</em> without a
   map. That map is <code>loca</code> — an array of byte <strong>offsets</strong> into <code>glyf</code>,
-  one entry per glyph <strong>plus one</strong>:</p>
-<pre>loca:   [ off0 ][ off1 ][ off2 ] … [ offN ][ offN+1 ]      (N = numGlyphs, so N+1 entries)
-            │      │
-            │      └───────────────┐
-            └───────┐              │
-glyf:   [ glyph 0 ][   glyph 1   ][ glyph 2 ] …            (variable-length records, packed)
+  one entry per glyph <strong>plus one</strong> — so <code>numGlyphs&nbsp;+&nbsp;1</code> entries, where
+  <code>numGlyphs</code> is the font's total glyph count (stored in the <code>maxp</code> table from
+  <a href="01-sfnt-container.html">Module 1</a>; <strong>46830</strong> here, as Module 2 used):</p>
+<pre>loca:   off0      off1          off2       off3   …   offN+1   (N+1 entries, N = numGlyphs)
+        │         │             │          │
+        ▼         ▼             ▼          ▼
+glyf:   ┌─────────┬─────────────┬──────────┬─ …              (variable-length records, packed)
+        │ glyph 0 │   glyph 1   │ glyph 2  │
+        └─────────┴─────────────┴──────────┴─ …
 
-        glyph i's bytes  =  glyf[ loca[i] : loca[i+1] ]</pre>
+        each loca[i] marks the START of glyph i, so   glyph i's bytes = glyf[ loca[i] : loca[i+1] ]</pre>
   <p>Three consequences worth saying out loud:</p>
   <ul>
     <li><strong>Why N+1 entries:</strong> glyph <em>i</em> runs from <code>loca[i]</code> to
       <code>loca[i+1]</code>, so the very last glyph needs an offset <em>after</em> it to mark its end.</li>
     <li><strong>Empty glyphs:</strong> if <code>loca[i] == loca[i+1]</code> the glyph has zero bytes —
       it draws nothing (e.g. the space character). Perfectly normal.</li>
-    <li><strong>Two storage formats:</strong> <code>head.indexToLocFormat</code> picks the entry size —
-      <strong>0</strong> = 16-bit "short" offsets stored as the real offset ÷ 2 (saves space, but only
-      reaches 128&nbsp;KB of glyf), <strong>1</strong> = 32-bit "long" offsets stored directly. This font
-      uses <strong>1</strong> (its glyf is 24.7&nbsp;MB — far past what short offsets could address).</li>
+    <li><strong>Two storage formats:</strong> the entry size is picked by one field, written
+      <code>head.indexToLocFormat</code> ("the <code>indexToLocFormat</code> field of the <code>head</code>
+      table"). <code>head</code> is the OpenType <em>font header</em> table — a named table reached through
+      the directory, listed in <a href="01-sfnt-container.html">Module 1</a>, not the 12-byte file header
+      at offset 0. <strong>0</strong> = 16-bit "short" offsets stored as the real offset ÷ 2 (saves space,
+      but only reaches 128&nbsp;KB of glyf); <strong>1</strong> = 32-bit "long" offsets stored directly.
+      This font uses <strong>1</strong> (its glyf is 24.7&nbsp;MB — far past what short offsets could
+      address).</li>
   </ul>
 
   <div class="exercise">
@@ -181,11 +188,68 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
   </figure>
 
   <h3>Contours, holes, and winding</h3>
-  <p>A glyph can have several contours. When they nest — the bowl of an 'O', the counter of '永' — a
-  <strong>winding rule</strong> decides what's inside: <strong>non-zero</strong> winding (the usual
-  TrueType rule) treats a contour wound the opposite way as a <em>hole</em>. Here are four real glyphs,
-  points colour-coded the same way:</p>
+  <p>A glyph can have several contours, and each contour has a <strong>direction</strong> — the order in
+  which its points are listed traces the loop either clockwise or counter-clockwise. That direction is not
+  decoration: it's how the renderer decides which regions are <em>solid</em> and which are <em>holes</em>.</p>
 
+  <h4>How the non-zero winding rule works</h4>
+  <p>To decide whether any point is inside the glyph, the renderer uses the <strong>non-zero winding
+  rule</strong>: shoot a ray from that point off to infinity and watch it cross contour edges. Each crossing
+  counts <strong>+1</strong> or <strong>−1</strong> depending on the <em>direction</em> the edge is heading
+  as it crosses (which is set by the contour's winding). Add them up — the point is <strong>filled when the
+  sum is not zero</strong>, and empty when it's zero. (A simpler alternative, the <em>even-odd</em> rule,
+  just counts crossings and fills on odd counts; TrueType uses non-zero.)</p>
+  <p>In this font — checkable with the area sign of each contour — <strong>outer contours run clockwise and
+  holes run counter-clockwise</strong>. That opposite direction is the whole trick:</p>
+  <ul>
+    <li>A point <strong>in the ring</strong> (between outer and inner) — the ray crosses only the outer
+      edge once ⇒ sum <code>±1</code> ⇒ <strong>filled</strong>.</li>
+    <li>A point <strong>in the inner region</strong> — the ray crosses the inner edge <em>and</em> the outer
+      edge, and because they wind opposite ways the two crossings cancel (<code>+1 − 1 = 0</code>) ⇒
+      <strong>empty</strong> ⇒ a hole.</li>
+    <li><strong>The key consequence:</strong> the inner contour carves a hole <em>only because it is wound
+      the opposite way</em>. Wind it the <em>same</em> way as the outer and the sums become <code>2</code>,
+      never zero — the "hole" fills in solid. Direction, not nesting alone, makes the hole.</li>
+  </ul>
+  <div class="callout">
+    <span class="label">Math aside — when is a contour's "direction" actually defined?</span>
+    <p>We've leaned on "this contour is clockwise, that one is counter-clockwise." Worth being precise about
+    when that even means something. A contour is always a <em>sequence</em> of points, so every edge has a
+    <em>local</em> direction — that part is free. But a single <em>global</em> clockwise/counter-clockwise
+    label is a stronger claim, and it's well-defined only for a <strong>simple</strong> loop:
+    non-self-intersecting, enclosing nonzero area. For such a loop the orientation is exactly the sign of
+    the <strong>signed (shoelace) area</strong> — negative ⇒ clockwise, positive ⇒ counter-clockwise (y up).
+    That's literally how we labelled every contour in the figure.</p>
+    <p>It stops being well-defined in two cases:</p>
+    <ul>
+      <li><strong>Degenerate (zero area):</strong> collinear points, or a path that runs out and back. The
+        shoelace area is <code>0</code>, so there is no clockwise/counter-clockwise to speak of.</li>
+      <li><strong>Self-intersecting:</strong> a figure-eight winds one way on one lobe and the other way on
+        the other — no single global direction. A symmetric figure-eight even has signed area exactly
+        <code>0</code>, the two lobes cancelling.</li>
+    </ul>
+    <p>The deeper point: the rasterizer <em>never needs</em> a global CW/CCW label. The <strong>winding
+    number</strong> is defined point-by-point as the sum of <em>local</em> signed crossings (exactly the ray
+    count above), so a fill is unambiguous even for self-intersecting or overlapping contours. Fonts simply
+    adopt the convention that every contour is a simple, consistently-oriented loop — which is why the tidy
+    "outer clockwise / hole counter-clockwise" picture holds for real glyphs.</p>
+  </div>
+
+  <figure>
+    <img src="../specimens/winding.png"
+         alt="永 口 日 回 rendered with each contour's winding direction marked, plus a ray-cast winding diagram">
+    <figcaption>Arrows show each contour's winding direction; blue = clockwise (fills its inside), red =
+    counter-clockwise (carves a hole). <strong>'永' (U+6C38):</strong> 3 contours, <em>all</em> clockwise
+    and none nested ⇒ three separate filled strokes, <strong>no hole</strong>. <strong>'口' (U+53E3):</strong>
+    outer + 1 opposite-wound inner ⇒ 1 hole. <strong>'日' (U+65E5):</strong> outer + 2 inner ⇒ 2 holes
+    (stacked windows). <strong>'回' (U+56DE):</strong> nested rings, 4 contours alternating direction ⇒ 2
+    holes. <strong>Bottom:</strong> the rule itself — a ray from point <em>P</em> in the hole crosses the
+    inner edge (+1) and the outer edge (−1), summing to 0, so P is empty.</figcaption>
+  </figure>
+
+  <p>So having several contours does <em>not</em> imply a hole — '永' proves it. And the same rule governs
+  Latin: an <strong>'O'</strong> is just an outer contour plus one opposite-wound inner contour, exactly
+  like '口'. The points gallery shows that 'O' structure alongside the simpler glyphs:</p>
   <figure>
     <img src="../specimens/glyph-points-gallery.png"
          alt="Four glyphs with on-curve anchors and off-curve controls marked on the em square">

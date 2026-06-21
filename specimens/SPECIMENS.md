@@ -80,6 +80,15 @@ Simple glyph '一' (U+4E00, glyph "u4E00"):
 
 Simple glyph '十' (U+5341): 1 contour, 46 points, on-curve flags start 1 1 0 1 0 1.
 
+Contours, holes & winding (signed shoelace area: >0 = counter-clockwise, <0 = clockwise, y up).
+Convention in this font: outer contours clockwise, holes counter-clockwise.
+- '永' (U+6C38): 3 contours, **all clockwise**, none nested — 3 separate filled strokes, **no hole**.
+- '口' (U+53E3): 2 contours — outer CW + 1 inner CCW = 1 hole.
+- '日' (U+65E5): 3 contours — outer CW + 2 inner CCW = 2 holes (stacked windows).
+- '回' (U+56DE): 4 contours — alternating CW/CCW nested rings = 2 holes.
+- 'O' (U+004F): 2 contours — outer CW + 1 inner CCW (the counter).
+Reproduce + plot: `specimens/plot_winding.py <font.ttf>` → `specimens/winding.png`.
+
 Composite glyphs (reuse other glyphs as components):
 - "dieresis" → 1 component, base glyph "dieresiscomb" placed at (x=500, y=0)
 - "acute" → 1 component, base glyph "acutecomb" placed at (x=517, y=0)
