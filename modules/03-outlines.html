@@ -195,8 +195,11 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
   <h4>How the non-zero winding rule works</h4>
   <p>To decide whether any point is inside the glyph, the renderer uses the <strong>non-zero winding
   rule</strong> (Chinese: <strong>非零环绕规则</strong>): shoot a ray from that point off to infinity and
-  watch it cross contour edges. Each crossing counts <strong>+1</strong> or <strong>−1</strong> depending
-  on the <em>direction</em> the edge is heading as it crosses (which is set by the contour's winding). Add
+  watch it cross contour edges. Each crossing counts <strong>+1</strong> or <strong>−1</strong> by <em>which
+  way</em> the edge crosses the ray — say <strong>+1</strong> if the contour heads from your right to your
+  left as you look outward along the ray, <strong>−1</strong> the other way. (Which side counts as +1 is
+  just a convention; the point is that contours wound in <em>opposite</em> directions cross with
+  <em>opposite</em> sign — that's the whole mechanism.) Add
   them up — the point is <strong>filled when the sum is not zero</strong>, and empty when it's zero. (A
   simpler alternative, the <em>even-odd</em> rule, <strong>奇偶规则</strong>, just counts crossings and
   fills on odd counts; TrueType uses non-zero.)</p>
@@ -305,7 +308,22 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
   </div>
 
   <div class="exercise">
-    <div class="x-head"><span class="x-id">3.5</span><span class="x-kind code">programming</span></div>
+    <div class="x-head"><span class="x-id">3.5</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Why any ray works.</strong> (a) In one sentence, why does shooting the ray in <em>any</em>
+    direction give the same inside/outside answer for a point P? (b) What single condition must the ray
+    satisfy, and what goes wrong without it?</p>
+    <details><summary>Show solution</summary>
+      (a) Because the signed crossing count equals the <strong>winding number</strong> of P — the net
+      number of full turns the direction P→curve makes as the contour is traced once — and that number has
+      no ray in its definition (equivalently, rotating the ray only creates/destroys crossings in canceling
+      <code>+1/−1</code> pairs, so the sum can't change). (b) The ray must be <strong>generic</strong>: it
+      must not pass exactly through a contour point or run along an edge — otherwise a crossing is ambiguous
+      (counted zero, once, or twice), which rasterizers avoid with a fixed tie-break.
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.6</span><span class="x-kind code">programming</span></div>
     <p><strong>Get the points, and render them.</strong> Load a glyph (try <code>'u5341'</code>, '十')
     and (a) print its <code>numberOfContours</code>, total points, and on-curve/off-curve counts; (b)
     render it — either replay it through a fontTools pen, or scatter <code>g.coordinates</code> with
@@ -413,7 +431,7 @@ Y: pt0 int16 01 68 = +360, pt1 short 28 = +40 (SAME/+ set ⇒ +),
   keeping every copy visually identical.</p>
 
   <div class="exercise">
-    <div class="x-head"><span class="x-id">3.6</span><span class="x-kind code">programming</span></div>
+    <div class="x-head"><span class="x-id">3.7</span><span class="x-kind code">programming</span></div>
     <p><strong>Hand-parse a glyph outline.</strong> Without using <code>g.coordinates</code>, pull a
     simple glyph's raw bytes, parse the header, the flags (mind REPEAT), and the delta-coded coordinates,
     and reconstruct the absolute points. Verify against <code>g.coordinates</code>. Use <code>'─'</code>
@@ -456,7 +474,7 @@ pen.value   <span class="cmt"># [('moveTo', …), ('lineTo', …), ('closePath',
   </table>
 
   <div class="exercise">
-    <div class="x-head"><span class="x-id">3.7</span><span class="x-kind code">programming</span></div>
+    <div class="x-head"><span class="x-id">3.8</span><span class="x-kind code">programming</span></div>
     <p><strong>Replay outlines through a pen.</strong> Capture the drawing commands for <code>'─'</code>
     (U+2500) and <code>'一'</code> (U+4E00) with a <code>RecordingPen</code>. How does the rectangle's
     command list differ from the one with curves? Which command carries the off-curve run? Bonus:
