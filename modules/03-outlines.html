@@ -194,14 +194,14 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
 
   <h4>How the non-zero winding rule works</h4>
   <p>To decide whether any point is inside the glyph, the renderer uses the <strong>non-zero winding
-  rule</strong> (Chinese: <strong>非零环绕规则</strong>): shoot a ray from that point off to infinity and
+  rule</strong>: shoot a ray from that point off to infinity and
   watch it cross contour edges. Each crossing counts <strong>+1</strong> or <strong>−1</strong> by <em>which
   way</em> the edge crosses the ray — say <strong>+1</strong> if the contour heads from your right to your
   left as you look outward along the ray, <strong>−1</strong> the other way. (Which side counts as +1 is
   just a convention; the point is that contours wound in <em>opposite</em> directions cross with
   <em>opposite</em> sign — that's the whole mechanism.) Add
   them up — the point is <strong>filled when the sum is not zero</strong>, and empty when it's zero. (A
-  simpler alternative, the <em>even-odd</em> rule, <strong>奇偶规则</strong>, just counts crossings and
+  simpler alternative, the <em>even-odd</em> rule, just counts crossings and
   fills on odd counts; TrueType uses non-zero.)</p>
   <p>In this font — checkable with the area sign of each contour — <strong>outer contours run clockwise and
   holes run counter-clockwise</strong>. That opposite direction is the whole trick:</p>
@@ -223,7 +223,7 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
   contour once around. Track only the <strong>direction from <em>P</em> to the pen</strong> — an angle that
   swings as the pen moves. When the pen returns to its start, that angle returns too, but along the way it
   may have wound around <em>P</em> some whole number of full turns. That integer — counter-clockwise turns
-  minus clockwise turns — is the <strong>winding number</strong> (环绕数 / 卷绕数) of <em>P</em>. Read that
+  minus clockwise turns — is the <strong>winding number</strong> of <em>P</em>. Read that
   definition again: <strong>it mentions no ray at all.</strong> It depends only on <em>P</em> and the curve.</p>
   <p>Ray-casting is merely a way to <em>count</em> those turns. Each time the contour crosses your ray, the
   pen's direction is sweeping past the ray's one fixed angle — once in the +turn sense (count <code>+1</code>)
