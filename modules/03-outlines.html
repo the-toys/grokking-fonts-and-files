@@ -188,41 +188,52 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
   </figure>
 
   <h3>Contours, holes, and winding</h3>
-  <p>A glyph can have several contours, and each contour has a <strong>direction</strong> — the order in
-  which its points are listed traces the loop either clockwise or counter-clockwise. That direction is not
-  decoration: it's how the renderer decides which regions are <em>solid</em> and which are <em>holes</em>.</p>
+  <p>A glyph is one or more <strong>closed loops</strong> (contours), and the renderer fills their inside.
+  The only wrinkle: when loops nest — the bowl of an <strong>'O'</strong>, the frame of
+  <strong>'口'</strong> — it has to decide whether the enclosed region is more ink or a <em>hole</em>. One
+  rule decides every case.</p>
 
-  <h4>How the non-zero winding rule works</h4>
-  <p>To decide whether any point is inside the glyph, the renderer uses the <strong>non-zero winding
-  rule</strong>: shoot a ray from that point off to infinity and
-  watch it cross contour edges. Each crossing counts <strong>+1</strong> or <strong>−1</strong> by <em>which
-  way</em> the edge crosses the ray — say <strong>+1</strong> if the contour heads from your right to your
-  left as you look outward along the ray, <strong>−1</strong> the other way. (Which side counts as +1 is
-  just a convention; the point is that contours wound in <em>opposite</em> directions cross with
-  <em>opposite</em> sign — that's the whole mechanism.) Add
-  them up — the point is <strong>filled when the sum is not zero</strong>, and empty when it's zero. (A
-  simpler alternative, the <em>even-odd</em> rule, just counts crossings and
-  fills on odd counts; TrueType uses non-zero.)</p>
-  <p>Two things to keep separate. A contour's <em>direction</em> (clockwise vs counter-clockwise, judged
-  with y up) is what the <strong>signed-area sign</strong> tells you — that's checkable per contour. But
-  whether a contour is the <em>outer</em> boundary, a <em>hole</em>, or a solid <em>island</em> nested
-  inside a hole is a <strong>containment</strong> fact the sign alone can't give. The convention this font
-  follows (the TrueType one — PostScript/CFF is reversed) is: the <strong>outermost</strong> contour winds
-  <strong>clockwise</strong>, and <strong>each level of nesting flips the winding</strong> — CW, CCW, CW, …
-  — so solid and hollow alternate inward. "Outer clockwise, hole counter-clockwise" is just the two-level
-  case (<strong>'口'</strong>, <strong>'O'</strong>); <strong>'回'</strong> nests four deep (CW, CCW, CW,
-  CCW), so its third-level contour is clockwise yet an inner ring, <em>not</em> the outer. With that
-  precision noted, hold the two-level picture, since it's where the opposite-direction trick is clearest:</p>
+  <h4>The rule</h4>
+  <p>From the point you're testing, shoot a ray off to infinity and count the contour edges it crosses —
+  but with a <strong>sign</strong>: each crossing is <strong>+1</strong> or <strong>−1</strong> by
+  <em>which way</em> the edge crosses (one direction is +1, the opposite −1 — which is which is just a
+  fixed convention). The point is <strong>inside when the signed total isn't zero</strong>, outside when
+  it's zero. That's the <strong>non-zero winding rule</strong>. <em>(A simpler cousin, the even-odd rule,
+  drops the sign and fills on an odd count; TrueType uses non-zero.)</em></p>
+
+  <h4>Why nesting makes a hole</h4>
+  <p>The whole trick is one fact: <strong>an inner loop is drawn the opposite direction from the outer
+  one.</strong> Trace a ray outward from each kind of point:</p>
   <ul>
-    <li>A point <strong>in the ring</strong> (between outer and inner) — the ray crosses only the outer
-      edge once ⇒ sum <code>±1</code> ⇒ <strong>filled</strong>.</li>
-    <li>A point <strong>in the inner region</strong> — the ray crosses the inner edge <em>and</em> the outer
-      edge, and because they wind opposite ways the two crossings cancel (<code>+1 − 1 = 0</code>) ⇒
-      <strong>empty</strong> ⇒ a hole.</li>
-    <li><strong>The key consequence:</strong> the inner contour carves a hole <em>only because it is wound
-      the opposite way</em>. Wind it the <em>same</em> way as the outer and the sums become <code>2</code>,
-      never zero — the "hole" fills in solid. Direction, not nesting alone, makes the hole.</li>
+    <li><strong>In the solid ring</strong> (between outer and inner): the ray crosses only the outer edge —
+      <strong>one</strong> crossing, so the total can't be zero ⇒ <strong>filled</strong>. (Its sign is
+      whatever the convention says — here <code>−1</code>, because the outer winds clockwise — but only
+      <em>nonzero-vs-zero</em> matters, never the sign itself.)</li>
+    <li><strong>In the enclosed region</strong>: it crosses the inner edge <em>and</em> the outer edge, and
+      because they wind <em>opposite</em> ways those two crossings take <strong>opposite signs and
+      cancel</strong> (<code>+1</code> and <code>−1</code> → <code>0</code>) ⇒ <strong>empty — a hole</strong>.</li>
+    <li><strong>Outside everything</strong>: no crossings ⇒ <code>0</code> ⇒ empty.</li>
   </ul>
+  <div class="callout key">
+    <span class="label">It's the opposite winding, not the nesting</span>
+    Draw that inner loop the <em>same</em> way as the outer and the two crossings take the <em>same</em>
+    sign — they <strong>add</strong> instead of cancelling (to <code>±2</code>, never zero) — so the "hole"
+    fills in solid. Direction is what carves a hole; one loop merely sitting inside another isn't enough.
+  </div>
+  <p>So several contours do <em>not</em> mean a hole: <strong>'永'</strong> is three strokes all wound the
+  same way — three separate filled blobs, zero holes. And a Latin <strong>'O'</strong> is exactly the
+  <strong>'口'</strong> picture: one outer loop, one opposite-wound inner loop. The real cases:</p>
+
+  <figure>
+    <img src="../specimens/winding.png"
+         alt="永 口 日 回 rendered with each contour's winding direction marked, plus a ray-cast winding diagram">
+    <figcaption>Arrows show each contour's direction; blue = one way (adds fill), red = the opposite (can
+    carve a hole). <strong>'永':</strong> 3 same-wound strokes, none nested ⇒ <strong>no hole</strong>.
+    <strong>'口':</strong> outer + 1 opposite-wound inner ⇒ 1 hole. <strong>'日':</strong> outer + 2 inner
+    ⇒ 2 holes. <strong>'回':</strong> rings nested four deep, direction alternating ⇒ 2 holes.
+    <strong>Bottom:</strong> a ray from a point <em>P</em> in the hole crosses the inner edge (+1) and the
+    outer edge (−1) → 0 → empty.</figcaption>
+  </figure>
   <h4>Why the ray's direction doesn't matter</h4>
   <p>That recipe should make you suspicious: if I shoot the ray straight <em>up</em> instead of to the
   <em>right</em>, do I get the same answer? <strong>Yes — always</strong>, and seeing <em>why</em> is the
@@ -255,43 +266,50 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
   rasterizers sidestep them with a fixed tie-break (e.g. "count an edge only at its lower endpoint") so a
   boundary pixel is never double-counted or missed.</p>
 
-  <h4>When is "clockwise" even defined?</h4>
-  <p>We keep saying "this contour is clockwise, that one counter-clockwise." When does a loop actually
-  <em>have</em> one global direction? Here's the easy way to see it: walk all the way around a loop that
-  <strong>never crosses itself</strong>. Your facing direction turns through exactly <strong>one full
-  circle</strong> by the time you're back — either <code>+360°</code> (counter-clockwise) or
-  <code>−360°</code> (clockwise). That sign <em>is</em> the loop's orientation. The number you actually
-  compute is the <strong>signed (shoelace) area</strong>: positive ⇒ counter-clockwise, negative ⇒
-  clockwise (with y up) — exactly how every contour in the figure was labelled.</p>
-  <p>It stops being defined in two cases, both absent from clean glyphs:</p>
-  <ul>
-    <li><strong>Self-intersecting</strong> (a figure-eight): one lobe turns each way, so there is no single
-      direction — and a symmetric figure-eight has signed area exactly <code>0</code>, the lobes
-      cancelling.</li>
-    <li><strong>Degenerate</strong> (zero area): collinear points, or a path that runs out and back. Signed
-      area is <code>0</code> — nothing to call clockwise.</li>
-  </ul>
-  <p>The reassuring part: the rasterizer <em>never needs</em> a global CW/CCW label anyway. The winding
-  number is defined point-by-point from <em>local</em> signed crossings (the ray count above), so a fill is
-  unambiguous even for self-intersecting or overlapping paths. Fonts simply adopt the convention that every
-  contour is a simple, consistently-wound loop — which is why the tidy "outer clockwise / hole
-  counter-clockwise" picture holds for real glyphs.</p>
+  <h4>How a renderer actually fills it</h4>
+  <p>The per-point ray is the <em>definition</em> of inside, not the <em>algorithm</em> — no rasterizer
+  shoots a separate ray per pixel. It works a row at a time (<strong>scanline conversion</strong>):</p>
+  <ol class="steps">
+    <li>Take a horizontal <strong>scanline</strong> across a pixel row (at the row's centre).</li>
+    <li>Find where contour edges cross it — just the x-positions, each tagged <code>+1</code>/<code>−1</code>
+      by direction.</li>
+    <li>Sort those x's and sweep left→right keeping a <strong>running winding sum</strong>; it changes only
+      at a crossing, so fill each span where the sum is nonzero.</li>
+  </ol>
+  <p>One scanline answers a whole row at once — the "ray" <em>is</em> the scanline, reused for every pixel
+  on it, not recast per point.</p>
+  <p>The awkward hits (the scanline grazing a vertex, or lying along a horizontal edge) aren't fixed by
+  rotating the ray — they're settled with a fixed <strong>tie-break</strong>: treat each edge as half-open
+  in y (count it at its <em>lower</em> endpoint, not its upper) and ignore exactly-horizontal edges. That
+  counts every shared vertex exactly once, so neighbouring spans share a boundary cleanly — no double-draw,
+  no one-pixel crack. (It's the same "top-left rule" GPUs use for triangles, and it's only sound because
+  <em>any</em> ray direction agrees — which we just proved.)</p>
+  <p>Two layers ride on top. <strong>Anti-aliasing:</strong> rather than a flat in/out, good rasterizers
+  compute each pixel's fractional <em>coverage</em> (how much of it the outline covers) by sub-sampling or
+  by accumulating exact signed area per pixel cell (FreeType's "smooth" rasterizer) — same winding logic,
+  measuring area instead of yes/no. <strong>Hinting:</strong> at small sizes the
+  <code>prep</code>/<code>fpgm</code>/<code>gasp</code> machinery grid-fits the outline onto pixel
+  boundaries <em>before</em> the fill runs, so stems stay crisp.</p>
 
-  <figure>
-    <img src="../specimens/winding.png"
-         alt="永 口 日 回 rendered with each contour's winding direction marked, plus a ray-cast winding diagram">
-    <figcaption>Arrows show each contour's winding direction; blue = clockwise (fills its inside), red =
-    counter-clockwise (carves a hole). <strong>'永' (U+6C38):</strong> 3 contours, <em>all</em> clockwise
-    and none nested ⇒ three separate filled strokes, <strong>no hole</strong>. <strong>'口' (U+53E3):</strong>
-    outer + 1 opposite-wound inner ⇒ 1 hole. <strong>'日' (U+65E5):</strong> outer + 2 inner ⇒ 2 holes
-    (stacked windows). <strong>'回' (U+56DE):</strong> nested rings, 4 contours alternating direction ⇒ 2
-    holes. <strong>Bottom:</strong> the rule itself — a ray from point <em>P</em> in the hole crosses the
-    inner edge (+1) and the outer edge (−1), summing to 0, so P is empty.</figcaption>
-  </figure>
+  <h4>The fine print: direction, role, and orientation</h4>
+  <p><strong>Direction vs. role.</strong> A contour's <em>direction</em> (clockwise / counter-clockwise,
+  judged with y up) is exactly the sign of its <strong>signed (shoelace) area</strong> — checkable per
+  contour. But whether it's the <em>outer</em> boundary, a <em>hole</em>, or a solid <em>island</em> inside
+  a hole is a <strong>containment</strong> fact the sign can't give you. The convention this font follows
+  (TrueType; PostScript/CFF is reversed): the outermost contour is clockwise, and <strong>each level of
+  nesting flips the winding</strong> (CW, CCW, CW, …), so solid/hollow alternate inward. "Outer CW, hole
+  CCW" is only the two-level case — <strong>'回'</strong> nests four deep, so its third contour is clockwise
+  yet an inner ring, <em>not</em> the outer.</p>
+  <p><strong>When is "clockwise" even defined?</strong> Walk a loop that never crosses itself and your
+  facing direction turns exactly one full circle — <code>+360°</code> (CCW) or <code>−360°</code> (CW);
+  that sign is the orientation, and the signed area computes it. It stops being defined for a
+  <strong>self-intersecting</strong> path (a figure-eight turns each way on its two lobes; a symmetric one
+  even has signed area exactly <code>0</code>) or a <strong>degenerate</strong> zero-area path. Neither
+  occurs in clean glyphs — and the rasterizer never needs a global label anyway, since the winding number
+  is defined point-by-point from local crossings.</p>
 
-  <p>So having several contours does <em>not</em> imply a hole — '永' proves it. And the same rule governs
-  Latin: an <strong>'O'</strong> is just an outer contour plus one opposite-wound inner contour, exactly
-  like '口'. The points gallery shows that 'O' structure alongside the simpler glyphs:</p>
+  <p>The same structure appears in Latin — an <strong>'O'</strong> is the '口' picture — next to the
+  simpler glyphs from earlier:</p>
   <figure>
     <img src="../specimens/glyph-points-gallery.png"
          alt="Four glyphs with on-curve anchors and off-curve controls marked on the em square">
@@ -321,10 +339,12 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
     direction give the same inside/outside answer for a point P? (b) What single condition must the ray
     satisfy, and what goes wrong without it?</p>
     <details><summary>Show solution</summary>
-      (a) Because the signed crossing count equals the <strong>winding number</strong> of P — the net
-      number of full turns the direction P→curve makes as the contour is traced once — and that number has
-      no ray in its definition (equivalently, rotating the ray only creates/destroys crossings in canceling
-      <code>+1/−1</code> pairs, so the sum can't change). (b) The ray must be <strong>generic</strong>: it
+      (a) Either reason works. <strong>The clean one:</strong> the signed crossing count <em>is</em> the
+      <strong>winding number</strong> of P — the net number of full turns the direction from P to the moving
+      point sweeps as the contour is traced once — and that quantity has <strong>no ray in its
+      definition</strong>, so it can't depend on which way you shoot. <strong>The hands-on one:</strong>
+      rotate the ray gradually, and crossings only ever appear or vanish in canceling <code>+1/−1</code>
+      pairs, so the total never changes. (b) The ray must be <strong>generic</strong>: it
       must not pass exactly through a contour point or run along an edge — otherwise a crossing is ambiguous
       (counted zero, once, or twice), which rasterizers avoid with a fixed tie-break.
     </details>
@@ -338,10 +358,12 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
     matplotlib, colouring on-curve vs off-curve by <code>flag &amp; 1</code>. Eyeball it against the
     gallery above.</p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
-      <code>g = font['glyf']['u5341']</code> gives <code>g.coordinates</code> and <code>g.flags</code>
-      (bit 0 = on-curve). For a filled render, <code>font.getGlyphSet()['u5341'].draw(pen)</code> with a
-      pen replays <code>moveTo/lineTo/qCurveTo/closePath</code>; for a quick scatter, just plot the
-      coordinates with two colours.
+      <code>g = font['glyf']['u5341']</code> exposes the same members from the step-3 snippet:
+      <code>g.numberOfContours</code>, <code>g.coordinates</code>, and <code>g.flags</code> (bit 0 =
+      on-curve); total points is <code>len(g.coordinates)</code>. For a filled render,
+      <code>font.getGlyphSet()['u5341'].draw(pen)</code> with a pen replays
+      <code>moveTo/lineTo/qCurveTo/closePath</code>; for a quick scatter, just plot the coordinates with
+      two colours.
     </details>
     <details><summary>✓ Check your answer</summary>
       '十': <code>numberOfContours = 1</code>, <strong>46</strong> points, <strong>22 on-curve</strong>,
