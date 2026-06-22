@@ -194,11 +194,12 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
 
   <h4>How the non-zero winding rule works</h4>
   <p>To decide whether any point is inside the glyph, the renderer uses the <strong>non-zero winding
-  rule</strong>: shoot a ray from that point off to infinity and watch it cross contour edges. Each crossing
-  counts <strong>+1</strong> or <strong>−1</strong> depending on the <em>direction</em> the edge is heading
-  as it crosses (which is set by the contour's winding). Add them up — the point is <strong>filled when the
-  sum is not zero</strong>, and empty when it's zero. (A simpler alternative, the <em>even-odd</em> rule,
-  just counts crossings and fills on odd counts; TrueType uses non-zero.)</p>
+  rule</strong> (Chinese: <strong>非零环绕规则</strong>): shoot a ray from that point off to infinity and
+  watch it cross contour edges. Each crossing counts <strong>+1</strong> or <strong>−1</strong> depending
+  on the <em>direction</em> the edge is heading as it crosses (which is set by the contour's winding). Add
+  them up — the point is <strong>filled when the sum is not zero</strong>, and empty when it's zero. (A
+  simpler alternative, the <em>even-odd</em> rule, <strong>奇偶规则</strong>, just counts crossings and
+  fills on odd counts; TrueType uses non-zero.)</p>
   <p>In this font — checkable with the area sign of each contour — <strong>outer contours run clockwise and
   holes run counter-clockwise</strong>. That opposite direction is the whole trick:</p>
   <ul>
@@ -211,29 +212,59 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
       the opposite way</em>. Wind it the <em>same</em> way as the outer and the sums become <code>2</code>,
       never zero — the "hole" fills in solid. Direction, not nesting alone, makes the hole.</li>
   </ul>
-  <div class="callout">
-    <span class="label">Math aside — when is a contour's "direction" actually defined?</span>
-    <p>We've leaned on "this contour is clockwise, that one is counter-clockwise." Worth being precise about
-    when that even means something. A contour is always a <em>sequence</em> of points, so every edge has a
-    <em>local</em> direction — that part is free. But a single <em>global</em> clockwise/counter-clockwise
-    label is a stronger claim, and it's well-defined only for a <strong>simple</strong> loop:
-    non-self-intersecting, enclosing nonzero area. For such a loop the orientation is exactly the sign of
-    the <strong>signed (shoelace) area</strong> — negative ⇒ clockwise, positive ⇒ counter-clockwise (y up).
-    That's literally how we labelled every contour in the figure.</p>
-    <p>It stops being well-defined in two cases:</p>
-    <ul>
-      <li><strong>Degenerate (zero area):</strong> collinear points, or a path that runs out and back. The
-        shoelace area is <code>0</code>, so there is no clockwise/counter-clockwise to speak of.</li>
-      <li><strong>Self-intersecting:</strong> a figure-eight winds one way on one lobe and the other way on
-        the other — no single global direction. A symmetric figure-eight even has signed area exactly
-        <code>0</code>, the two lobes cancelling.</li>
-    </ul>
-    <p>The deeper point: the rasterizer <em>never needs</em> a global CW/CCW label. The <strong>winding
-    number</strong> is defined point-by-point as the sum of <em>local</em> signed crossings (exactly the ray
-    count above), so a fill is unambiguous even for self-intersecting or overlapping contours. Fonts simply
-    adopt the convention that every contour is a simple, consistently-oriented loop — which is why the tidy
-    "outer clockwise / hole counter-clockwise" picture holds for real glyphs.</p>
+  <h4>Why the ray's direction doesn't matter</h4>
+  <p>That recipe should make you suspicious: if I shoot the ray straight <em>up</em> instead of to the
+  <em>right</em>, do I get the same answer? <strong>Yes — always</strong>, and seeing <em>why</em> is the
+  heart of the whole rule, so let's be careful.</p>
+  <p>Forget the ray for a moment. Stand at the test point <em>P</em> and watch a pen trace the entire
+  contour once around. Track only the <strong>direction from <em>P</em> to the pen</strong> — an angle that
+  swings as the pen moves. When the pen returns to its start, that angle returns too, but along the way it
+  may have wound around <em>P</em> some whole number of full turns. That integer — counter-clockwise turns
+  minus clockwise turns — is the <strong>winding number</strong> (环绕数 / 卷绕数) of <em>P</em>. Read that
+  definition again: <strong>it mentions no ray at all.</strong> It depends only on <em>P</em> and the curve.</p>
+  <p>Ray-casting is merely a way to <em>count</em> those turns. Each time the contour crosses your ray, the
+  pen's direction is sweeping past the ray's one fixed angle — once in the +turn sense (count <code>+1</code>)
+  or the −turn sense (<code>−1</code>). Over the full loop, the signed crossings add up to exactly the net
+  number of turns — the winding number. Since that number contains no ray, <strong>every ray, in every
+  direction, must report the same total.</strong> The ray is just a tick-mark for counting turns; where you
+  put the tick can't change how many turns the pen actually made.</p>
+
+  <div class="callout key">
+    <span class="label">The same fact, seen as cancellation</span>
+    Here it is without the angle argument. Rotate your ray slowly from one direction toward another. The
+    signed crossing count can only change at the instant the ray grazes the curve <strong>tangentially</strong>
+    — and there, two crossings are always born (or destroyed) <strong>together, with opposite signs</strong>:
+    the ray dips across the edge and back out, a <code>+1</code> and a <code>−1</code> that cancel. So the
+    signed sum never moves as the ray turns ⇒ all directions agree. (The even-odd rule survives for the same
+    reason: crossings still appear and vanish in <em>pairs</em>, so the <em>parity</em> of the count can't
+    change either.)
   </div>
+  <p class="legend">One honest caveat: choose a <strong>generic</strong> ray — one that doesn't pass exactly
+  through a listed point or run along an edge. Those degenerate directions are only finitely many; real
+  rasterizers sidestep them with a fixed tie-break (e.g. "count an edge only at its lower endpoint") so a
+  boundary pixel is never double-counted or missed.</p>
+
+  <h4>When is "clockwise" even defined?</h4>
+  <p>We keep saying "this contour is clockwise, that one counter-clockwise." When does a loop actually
+  <em>have</em> one global direction? Here's the easy way to see it: walk all the way around a loop that
+  <strong>never crosses itself</strong>. Your facing direction turns through exactly <strong>one full
+  circle</strong> by the time you're back — either <code>+360°</code> (counter-clockwise) or
+  <code>−360°</code> (clockwise). That sign <em>is</em> the loop's orientation. The number you actually
+  compute is the <strong>signed (shoelace) area</strong>: positive ⇒ counter-clockwise, negative ⇒
+  clockwise (with y up) — exactly how every contour in the figure was labelled.</p>
+  <p>It stops being defined in two cases, both absent from clean glyphs:</p>
+  <ul>
+    <li><strong>Self-intersecting</strong> (a figure-eight): one lobe turns each way, so there is no single
+      direction — and a symmetric figure-eight has signed area exactly <code>0</code>, the lobes
+      cancelling.</li>
+    <li><strong>Degenerate</strong> (zero area): collinear points, or a path that runs out and back. Signed
+      area is <code>0</code> — nothing to call clockwise.</li>
+  </ul>
+  <p>The reassuring part: the rasterizer <em>never needs</em> a global CW/CCW label anyway. The winding
+  number is defined point-by-point from <em>local</em> signed crossings (the ray count above), so a fill is
+  unambiguous even for self-intersecting or overlapping paths. Fonts simply adopt the convention that every
+  contour is a simple, consistently-wound loop — which is why the tidy "outer clockwise / hole
+  counter-clockwise" picture holds for real glyphs.</p>
 
   <figure>
     <img src="../specimens/winding.png"
