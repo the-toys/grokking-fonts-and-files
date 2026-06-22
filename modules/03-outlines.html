@@ -203,8 +203,16 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
   them up — the point is <strong>filled when the sum is not zero</strong>, and empty when it's zero. (A
   simpler alternative, the <em>even-odd</em> rule, just counts crossings and
   fills on odd counts; TrueType uses non-zero.)</p>
-  <p>In this font — checkable with the area sign of each contour — <strong>outer contours run clockwise and
-  holes run counter-clockwise</strong>. That opposite direction is the whole trick:</p>
+  <p>Two things to keep separate. A contour's <em>direction</em> (clockwise vs counter-clockwise, judged
+  with y up) is what the <strong>signed-area sign</strong> tells you — that's checkable per contour. But
+  whether a contour is the <em>outer</em> boundary, a <em>hole</em>, or a solid <em>island</em> nested
+  inside a hole is a <strong>containment</strong> fact the sign alone can't give. The convention this font
+  follows (the TrueType one — PostScript/CFF is reversed) is: the <strong>outermost</strong> contour winds
+  <strong>clockwise</strong>, and <strong>each level of nesting flips the winding</strong> — CW, CCW, CW, …
+  — so solid and hollow alternate inward. "Outer clockwise, hole counter-clockwise" is just the two-level
+  case (<strong>'口'</strong>, <strong>'O'</strong>); <strong>'回'</strong> nests four deep (CW, CCW, CW,
+  CCW), so its third-level contour is clockwise yet an inner ring, <em>not</em> the outer. With that
+  precision noted, hold the two-level picture, since it's where the opposite-direction trick is clearest:</p>
   <ul>
     <li>A point <strong>in the ring</strong> (between outer and inner) — the ray crosses only the outer
       edge once ⇒ sum <code>±1</code> ⇒ <strong>filled</strong>.</li>
