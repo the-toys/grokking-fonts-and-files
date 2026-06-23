@@ -108,7 +108,7 @@ loca[3172]   = 931454      ┘  glyf[931382 : 931454]  →  72 bytes long</code>
 font = TTFont(path)
 g = font[<span class="str">"glyf"</span>][<span class="str">"u4E00"</span>]
 g.numberOfContours      <span class="cmt"># 1   (&gt;0 simple glyph, -1 composite)</span>
-g.coordinates           <span class="cmt"># [(110,383), (837,420), (861,422), …]  21 points</span>
+g.coordinates           <span class="cmt"># 21 ABSOLUTE (x,y) points: [(110,383), (837,420), …]</span>
 g.flags                 <span class="cmt"># parallel bytes; bit0 (&amp; 1) = on-curve</span>
 g.endPtsOfContours      <span class="cmt"># [20]  last point index of each contour</span></code></pre>
   <p>So glyph '一' is <strong>1 contour, 21 points</strong>, and its first few coordinates are
@@ -138,11 +138,23 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
   <p>Now the payoff. We have a list of points like <code>(110, 383)</code> and a flag per point. Two
   things to decode: <em>where</em> a point is, and <em>what role</em> it plays.</p>
 
-  <h3>Where: font units on the em square</h3>
-  <p>Coordinates are in <strong>font units</strong> on the <strong>em square</strong>. Here
-  <code>unitsPerEm = 1000</code>, so <code>(110, 383)</code> is 110 units right, 383 up, on a 1000×1000
-  design grid (x → right, y → up; the baseline is y = 0). How that grid scales to pixels is all of
-  <a href="04-metrics.html">Module 4</a>; for now just read points as positions on a 1000-unit grid.</p>
+  <h3>Where: font units, measured from the baseline</h3>
+  <p>Coordinates are in <strong>font units</strong>: <strong>x → right</strong> from the origin (the left
+  edge), <strong>y → up</strong> from the <strong>baseline</strong> — the line text sits on, at
+  <code>y = 0</code>. <code>unitsPerEm = 1000</code> is the <em>scale</em> (1 em = 1000 units), so
+  <code>(110, 383)</code> means 110 units right, 383 above the baseline.</p>
+  <div class="callout key">
+    <span class="label">Coordinates are signed — and not boxed into [0, 1000]</span>
+    The baseline is <em>not</em> the bottom of the glyph; it's the writing line. Anything <strong>below</strong>
+    it has <strong>negative y</strong> — Latin descenders (<code>'g'</code> → <code>−175</code>,
+    <code>'p'</code>, <code>'y'</code>, <code>'j'</code>) and CJK strokes that dip down
+    (<code>'十'</code>'s vertical reaches <code>y = −86</code>). Ink can also sit left of the origin
+    (negative x) or extend past the em. <strong>The 1000 is a ruler, not a bounding box</strong> — glyphs
+    aren't confined to it. (So when <code>g.coordinates</code> shows <code>(537, −59)</code>, that's just
+    "x 537, 59 units below the baseline".)
+  </div>
+  <p>How units scale to pixels is all of <a href="04-metrics.html">Module 4</a>; for now, read each point
+  as a position on this baseline-relative ruler.</p>
 
   <h3>Role: on-curve vs off-curve — and what a Bézier curve is</h3>
   <p>Each point's flag bit 0 marks it <strong>on-curve</strong> or <strong>off-curve</strong>. To see why
@@ -357,6 +369,16 @@ g.endPtsOfContours      <span class="cmt"># [20]  last point index of each conto
     render it — either replay it through a fontTools pen, or scatter <code>g.coordinates</code> with
     matplotlib, colouring on-curve vs off-curve by <code>flag &amp; 1</code>. Eyeball it against the
     gallery above.</p>
+    <p><em>For the plot, you'll need the real extent:</em> <code>'十'</code> is <strong>not</strong>
+    boxed in [0, 1000] — its bounding box is <code>x 73…939</code>, <strong><code>y −86…800</code></strong>,
+    so its vertical stroke runs from <code>y 800</code> down <em>through</em> the baseline to
+    <code>y −86</code> (below it). Draw the <code>y = 0</code> baseline so that below-baseline tail is
+    visible, and set your axes from the bbox, not from <code>0</code>.</p>
+    <p>That's for <em>one</em> glyph in isolation. Laying glyphs into a <em>line</em> is different: you
+    don't size the line to each glyph — you reserve a <strong>fixed vertical box</strong> (an
+    <em>ascent</em> above the baseline, a <em>descent</em> below it) from the <em>font's</em> metrics,
+    identical for every line, and accept that a rare deep or tall glyph overflows it. Those line metrics
+    are <a href="04-metrics.html">Module 4</a>.</p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
       <code>g = font['glyf']['u5341']</code> exposes the same members from the step-3 snippet:
       <code>g.numberOfContours</code>, <code>g.coordinates</code>, and <code>g.flags</code> (bit 0 =
@@ -416,15 +438,22 @@ loca[870]    = 153501                   ┘ file offset = 592352 + 153477 = 7458
   set ⇒ <strong>all on-curve</strong>. Coordinates follow three rules:</p>
   <div class="callout key">
     <span class="label">Three rules that make coordinates tiny</span>
-    <strong>(1) Deltas:</strong> each coordinate is relative to the <em>previous</em> point (first
-    relative to origin 0). <strong>(2) All-X-then-all-Y:</strong> every x delta first, then every y delta
+    <strong>(1) Deltas (a running sum):</strong> each stored value is a <em>step</em> from the previous
+    point, so a point's absolute coordinate is the <strong>running total</strong> — start at <code>0</code>
+    (the first step is measured from the origin) and add each delta in turn; x and y accumulate
+    independently. <strong>(2) All-X-then-all-Y:</strong> every x delta first, then every y delta
     — not interleaved. <strong>(3) Variable width:</strong> SHORT bit → 1 byte (sign from the SAME/+ bit);
     else SAME/+ bit → <em>0 bytes</em> (delta 0); else a 2-byte signed int16.
   </div>
   <p>Decoding the trailing <code>03 e8 01 68 28 28</code> — x deltas first, then y:</p>
-<pre><code>X: pt0 SAME→0, pt1 SAME→0, pt2 int16 03 e8 = +1000, pt3 SAME→0   ⇒ x = 0, 0, 1000, 1000
-Y: pt0 int16 01 68 = +360, pt1 short 28 = +40 (SAME/+ set ⇒ +),
-   pt2 SAME→0, pt3 short 28 = −40 (SAME/+ clear ⇒ −)            ⇒ y = 360, 400, 400, 360</code></pre>
+<pre><code>           pt0      pt1      pt2        pt3        bytes consumed
+x delta:   +0       +0       +1000      +0         "03 e8"  (pt2 int16; rest SAME → 0)
+y delta:   +360     +40      +0         −40        "01 68" + "28" + "28"
+                                                   (pt0 int16; pt1 short, SAME/+ ⇒ +; pt3 short ⇒ −)
+
+absolute = running sum from 0 (add each delta to the previous point):
+x:  0 → 0 → 0 → 1000 → 1000        ⇒  x = 0, 0, 1000, 1000
+y:  0 → 360 → 400 → 400 → 360      ⇒  y = 360, 400, 400, 360</code></pre>
   <table class="mono">
     <tr><th>point</th><th>(x, y)</th><th>on-curve</th></tr>
     <tr><td>0</td><td>(0, 360)</td><td>yes</td></tr>
@@ -434,7 +463,21 @@ Y: pt0 int16 01 68 = +360, pt1 short 28 = +40 (SAME/+ set ⇒ +),
   </table>
   <p>Four on-curve corners ⇒ a filled rectangle <code>(0,360)→(1000,400)</code>: a full-width bar 40
   units tall at mid-height — exactly <strong>'─'</strong>, matching the header's bounding box. All 24
-  bytes accounted for.</p>
+  bytes accounted for. (Note the <code>−40</code> was a <em>delta</em>, not a coordinate — here the running
+  sum stays ≥ 0. But it needn't: a glyph with a <strong>descender</strong> carries the y total
+  <em>below the baseline</em> into negatives — e.g. <code>'g'</code> reaches <code>y = −175</code> — which
+  is exactly why every coordinate field is a <em>signed</em> int16.)</p>
+
+  <div class="callout key">
+    <span class="label">Bytes vs. g.coordinates — don't confuse the layers</span>
+    This delta / running-sum encoding lives <strong>only in the raw glyf bytes</strong>. fontTools'
+    <code>g.coordinates</code> (step 3) are already the <strong>absolute</strong> points — it runs this
+    accumulation the instant it loads the glyph. So <code>'十'</code>'s
+    <code>g.coordinates = [(536,386), (537,−59), …]</code> are positions you can plot directly (and they
+    look right); treat <em>those</em> as deltas and accumulate and you'd get
+    <code>(536,386), (1073,327), …</code> — x past the 1000 em, nonsense. You only do the running sum by
+    hand when parsing the raw bytes yourself, as in this section.
+  </div>
 
   <div class="callout warn">
     <span class="label">The two traps</span>
