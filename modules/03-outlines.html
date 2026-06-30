@@ -407,6 +407,38 @@ loca[869]    = 153477                   ┐ length = 153501 − 153477 = 24 byte
 loca[870]    = 153501                   ┘ file offset = 592352 + 153477 = 745829</code></pre>
   <p class="legend">Note glyph names vary — resolve via the cmap (<code>getBestCmap()[0x2500]</code>)
   rather than assuming "u2500". '一' happens to be "u4E00", but that pattern isn't guaranteed.</p>
+
+  <div class="callout key">
+    <span class="label">How to actually grab the bytes from loca</span>
+    <code>loca</code> is an array of <strong>N+1</strong> offsets (one extra sentinel at the end). Glyph
+    <code>gid</code>'s data is the half-open range <code>[loca[gid], loca[gid+1])</code> — you read the
+    glyph's own offset <em>and the next one</em>, and their difference is the length. That trailing
+    sentinel is exactly why the array has one more entry than there are glyphs: even the last glyph needs a
+    <code>gid+1</code> to bound it. Three things to get right:
+    <br><br>
+    <strong>(1) loca offsets are relative to the glyf table, not the file.</strong> Add the
+    <code>glyf</code> table's own offset (from the Module 1 directory) to seek in the raw file:
+    <code>file_off = glyf_offset + loca[gid]</code>.
+    <br>
+    <strong>(2) Short vs long loca format</strong> (<code>head.indexToLocFormat</code>): <code>0</code> =
+    short, each offset is a <code>uint16</code> storing <em>offset ÷ 2</em> (multiply by 2, glyphs are
+    2-byte aligned); <code>1</code> = long, each is a <code>uint32</code> byte offset used as-is. This font
+    is <strong>long</strong>. fontTools' <code>font['loca'].locations</code> hands you already-decoded byte
+    offsets either way — the ÷2 only bites when parsing loca's bytes by hand.
+    <br>
+    <strong>(3) Zero length ⇒ no outline.</strong> If <code>loca[gid] == loca[gid+1]</code> the glyph has
+    <em>no glyf data at all</em> — a blank glyph like <code>space</code>. Read nothing; don't parse a header.
+  </div>
+<pre><code><span class="kw">import</span> struct
+glyf_off   = font.reader.tables[<span class="str">'glyf'</span>].offset    <span class="cmt"># 592352, from the sfnt directory</span>
+loca       = font[<span class="str">'loca'</span>].locations           <span class="cmt"># decoded offsets, len = numGlyphs + 1</span>
+gid        = <span class="num">869</span>
+start, end = loca[gid], loca[gid+<span class="num">1</span>]            <span class="cmt"># 153477, 153501</span>
+length     = end - start                     <span class="cmt"># 24   (0 ⇒ blank glyph, stop here)</span>
+<span class="kw">with</span> <span class="kw">open</span>(path, <span class="str">"rb"</span>) <span class="kw">as</span> fh:
+    fh.seek(glyf_off + start)                <span class="cmt"># 745829</span>
+    raw = fh.read(length)
+<span class="cmt"># raw = 00 01 00 00 01 68 03 e8 01 90 00 03 00 00 11 35 21 15 03 e8 01 68 28 28</span></code></pre>
   <p>The 24 raw bytes:</p>
 <pre class="bytemap"><span class="b f0">00 01</span> <span class="b f1">00 00 01 68 03 e8 01 90</span> <span class="b f2">00 03</span> <span class="b f3">00 00</span> <span class="b f4">11 35 21 15</span> <span class="b f0">03 e8 01 68 28 28</span></pre>
   <p class="legend"><span class="b f0">numberOfContours</span> · <span class="b f1">bounding box</span> ·
@@ -421,35 +453,118 @@ loca[870]    = 153501                   ┘ file offset = 592352 + 153477 = 7458
     <tr><td class="mono">00 03</td><td>endPtsOfContours[0]</td><td class="mono">3</td><td>contour ends at point 3 ⇒ <strong>4 points</strong></td></tr>
     <tr><td class="mono">00 00</td><td>instructionLength</td><td class="mono">0</td><td>no hinting bytecode</td></tr>
   </table>
+  <p>'─' is the easy case — one contour, no hinting. The general simple-glyph layout has two
+  <strong>variable-length</strong> fields hiding in those two rows:</p>
+<pre><code>numberOfContours   int16                       <span class="cmt"># n; ≥0 here, −1 ⇒ composite</span>
+xMin yMin xMax yMax 4 × int16                   <span class="cmt"># bounding box</span>
+endPtsOfContours   <b>n</b> × uint16                   <span class="cmt"># one per contour ⇒ 2·n bytes</span>
+instructionLength  uint16                       <span class="cmt"># m</span>
+instructions       <b>m</b> bytes                      <span class="cmt"># hinting bytecode (skip for outlines)</span>
+flags              one byte/point, REPEAT-packed
+xCoordinates       deltas (all x first)
+yCoordinates       deltas (then all y)</code></pre>
+  <div class="callout key">
+    <span class="label">The two fields that aren't fixed-width</span>
+    <strong>(1) endPtsOfContours is <code>n</code> uint16s, so 2·n bytes</strong> — '─' has one contour
+    (2 bytes), but a 5-contour glyph like this font's <code>.notdef</code> carries
+    <code>00 21 00 46 00 93 00 c9 00 d1</code> = <code>(33, 70, 147, 201, 209)</code>, ten bytes. Each value
+    is the index of that contour's <em>last</em> point (cumulative, not a count): contour 0 is points 0–33,
+    contour 1 is 34–70, and so on. Crucially, <strong>the last entry + 1 is the total point count</strong>
+    (209 + 1 = 210) — that's the number you need before you can read the flags, since there's one flag per
+    point.
+    <br><br>
+    <strong>(2) instructionLength bytes of hinting follow it.</strong> If <code>instructionLength = m</code>
+    is nonzero, exactly <code>m</code> bytes of TrueType hinting bytecode sit <em>between</em>
+    instructionLength and the flags. They nudge points onto the pixel grid at specific render sizes — they
+    do <em>not</em> change the stored outline, so when hand-parsing you just <strong>skip
+    <code>m</code> bytes</strong> to reach the flags. (Every glyph in <em>this</em> font has
+    <code>instructionLength = 0</code> — common for large CJK fonts that lean on the renderer's
+    auto-hinter rather than hand-hinting tens of thousands of glyphs — which is why '─' shows
+    <code>00 00</code> and the flags start immediately.)
+  </div>
 
   <h3>Flags &amp; the delta-coded coordinates</h3>
   <p>After the header come the flags (one per point, run-length compressible), then the coordinates. The
-  flag byte is a bitfield:</p>
+  flag byte is a bitfield. The x delta is controlled by a <strong>pair</strong> of bits (1 and 4); the y
+  delta by the mirror pair (2 and 5):</p>
   <table class="mono">
     <tr><th>bit</th><th>mask</th><th>name</th><th>meaning</th></tr>
     <tr><td>0</td><td>0x01</td><td>ON_CURVE</td><td>1 = on-curve anchor, 0 = off-curve control</td></tr>
-    <tr><td>1</td><td>0x02</td><td>X_SHORT</td><td>x delta is 1 byte (else 0 or 2)</td></tr>
-    <tr><td>2</td><td>0x04</td><td>Y_SHORT</td><td>y delta is 1 byte</td></tr>
+    <tr><td>1</td><td>0x02</td><td>X_SHORT</td><td>1 ⇒ x delta occupies 1 byte; 0 ⇒ it occupies 0 or 2 bytes</td></tr>
+    <tr><td>2</td><td>0x04</td><td>Y_SHORT</td><td>same, for y</td></tr>
     <tr><td>3</td><td>0x08</td><td>REPEAT</td><td>next byte = how many extra points repeat this flag</td></tr>
-    <tr><td>4</td><td>0x10</td><td>X_SAME / +</td><td><strong>dual:</strong> if X_SHORT → sign (1=+, 0=−); else → x delta is 0 (same as prev)</td></tr>
-    <tr><td>5</td><td>0x20</td><td>Y_SAME / +</td><td><strong>dual:</strong> if Y_SHORT → sign; else → y delta is 0</td></tr>
+    <tr><td>4</td><td>0x10</td><td>X_SAME_OR_SIGN</td><td>meaning depends on X_SHORT — see the 2×2 below</td></tr>
+    <tr><td>5</td><td>0x20</td><td>Y_SAME_OR_SIGN</td><td>same, for y</td></tr>
   </table>
-  <p>Our four flag bytes <code>11 35 21 15</code> (no REPEAT bit, so one per point): all four have bit 0
-  set ⇒ <strong>all on-curve</strong>. Coordinates follow three rules:</p>
   <div class="callout key">
-    <span class="label">Three rules that make coordinates tiny</span>
+    <span class="label">One byte per point, not 6 bits</span>
+    Each flag is a <strong>whole byte</strong>. Only bits 0–5 are defined above (bits 6–7 are reserved),
+    but the parser still reads <strong>one full byte per point</strong> — flags are byte-aligned and never
+    bit-packed across point boundaries, so you never "peel 6 bits then straddle into the next byte." (That
+    byte-alignment is exactly what lets REPEAT work: it duplicates an entire identical flag byte.)
+    <br><br>
+    Within a byte, "<strong>bit N</strong>" is the bit worth 2<sup>N</sup>, counted from the
+    <strong>least-significant</strong> end: bit 0 = <code>0x01</code> is the LSB, bit 5 = <code>0x20</code>.
+    You test one with <code>flag &amp; mask</code>. Peeling <code>0x35 = 0011&nbsp;0101</code> from the LSB
+    up: bits <strong>0, 2, 4, 5</strong> are set (so ON_CURVE, Y_SHORT, X_SAME_OR_SIGN, Y_SAME_OR_SIGN —
+    note <code>0x35 &amp; 0x02 = 0</code>, X_SHORT is <em>clear</em>).
+  </div>
+  <p>Bit 4 is the one that trips everyone up: <strong>it has two unrelated meanings, and bit 1 (X_SHORT)
+  decides which.</strong> The spec name spells out both halves —
+  <code>X_IS_SAME_OR_POSITIVE_X_SHORT_VECTOR</code>: when the delta <em>is</em> short, bit 4 is its
+  <em>sign</em>; when it <em>isn't</em>, bit 4 means "<em>same</em> as the previous point" (a zero delta).
+  So the two x-bits together select exactly one of four cases:</p>
+  <table class="mono">
+    <tr><th>bit 1 (X_SHORT)</th><th>bit 4</th><th>bytes read</th><th>x delta</th></tr>
+    <tr><td>1</td><td>1</td><td>1</td><td><strong>+</strong> (that byte, 0–255)</td></tr>
+    <tr><td>1</td><td>0</td><td>1</td><td><strong>−</strong> (that byte, 0–255)</td></tr>
+    <tr><td>0</td><td>1</td><td>0</td><td><strong>0</strong> — same as previous point</td></tr>
+    <tr><td>0</td><td>0</td><td>2</td><td>signed <strong>int16</strong></td></tr>
+  </table>
+  <p>(The short form is an <em>unsigned</em> byte with its sign supplied by bit 4 — that's how 1 byte still
+  reaches ±255. The y delta works identically off bits 2 and 5.)</p>
+  <p>Our four flag bytes <code>11 35 21 15</code> (no REPEAT bit, so one per point): all four have bit 0
+  set ⇒ <strong>all on-curve</strong>. Two more rules govern how the coordinate bytes that follow are read:</p>
+  <div class="callout key">
+    <span class="label">Two rules for reading the coordinate stream</span>
     <strong>(1) Deltas (a running sum):</strong> each stored value is a <em>step</em> from the previous
     point, so a point's absolute coordinate is the <strong>running total</strong> — start at <code>0</code>
     (the first step is measured from the origin) and add each delta in turn; x and y accumulate
     independently. <strong>(2) All-X-then-all-Y:</strong> every x delta first, then every y delta
-    — not interleaved. <strong>(3) Variable width:</strong> SHORT bit → 1 byte (sign from the SAME/+ bit);
-    else SAME/+ bit → <em>0 bytes</em> (delta 0); else a 2-byte signed int16.
+    — not interleaved. <em>How wide each delta is</em> (0, 1, or 2 bytes) and <em>its sign</em> come
+    straight from the 2×2 table above.
   </div>
-  <p>Decoding the trailing <code>03 e8 01 68 28 28</code> — x deltas first, then y:</p>
-<pre><code>           pt0      pt1      pt2        pt3        bytes consumed
-x delta:   +0       +0       +1000      +0         "03 e8"  (pt2 int16; rest SAME → 0)
-y delta:   +360     +40      +0         −40        "01 68" + "28" + "28"
-                                                   (pt0 int16; pt1 short, SAME/+ ⇒ +; pt3 short ⇒ −)
+  <p>Now decode the trailing 6 bytes <code>03 e8 01 68 28 28</code>. Work in two passes — read every x
+  delta, then every y delta — and walk a <em>cursor</em> through the bytes, consuming exactly the width
+  each flag dictates. <strong>Step 1: from the four flags, read off each point's x and y width</strong>
+  (using the 2×2 table):</p>
+<pre><code>flag   binary      x: bit1 bit4 → width   y: bit2 bit5 → width
+pt0 11 0001 0001    0    1   → 0 (same)     0    0   → 2 (int16)
+pt1 35 0011 0101    0    1   → 0 (same)     1    1   → 1 (+short)
+pt2 21 0010 0001    0    0   → 2 (int16)    0    1   → 0 (same)
+pt3 15 0001 0101    0    1   → 0 (same)     1    0   → 1 (−short)
+                    ───────────────────     ───────────────────
+                    x stream = 2 bytes      y stream = 4 bytes     → 6 total ✓</code></pre>
+  <p><strong>Step 2: walk the cursor.</strong> The x pass reads its 2 bytes first, then the y pass reads
+  the remaining 4 — that's the all-X-then-all-Y rule made concrete:</p>
+<pre><code>bytes:  03 e8 01 68 28 28
+        └─x──┘└────y─────┘
+
+X pass (consume 2 bytes):
+  pt0  width 0  →  Δx = 0                          cursor ▸ 03 e8 01 68 28 28
+  pt1  width 0  →  Δx = 0                          cursor ▸ 03 e8 01 68 28 28
+  pt2  width 2  →  read "03 e8" = 0x03e8 = +1000   cursor ▸ ‖01 68 28 28   (03 e8 eaten)
+  pt3  width 0  →  Δx = 0
+
+Y pass (consume 4 bytes):
+  pt0  width 2  →  read "01 68" = 0x0168 = +360    cursor ▸ ‖28 28        (01 68 eaten)
+  pt1  width 1  →  read "28"    = 40, bit5=1 ⇒ +40  cursor ▸ ‖28           (28 eaten)
+  pt2  width 0  →  Δy = 0
+  pt3  width 1  →  read "28"    = 40, bit5=0 ⇒ −40  cursor ▸ ‖            (28 eaten — all 6 used)
+
+       pt0    pt1    pt2     pt3
+Δx:    +0     +0     +1000   +0
+Δy:    +360   +40    +0      −40
 
 absolute = running sum from 0 (add each delta to the previous point):
 x:  0 → 0 → 0 → 1000 → 1000        ⇒  x = 0, 0, 1000, 1000
@@ -487,21 +602,85 @@ y:  0 → 360 → 400 → 400 → 360      ⇒  y = 360, 400, 400, 360</code></p
   </div>
 
   <h3>A composite in bytes: dieresis</h3>
-  <p>A composite glyph draws no outline of its own — it places <em>other</em> glyphs. The spacing
-  dieresis has <code>numberOfContours = −1</code>, then one component record:</p>
+  <p>A composite glyph draws no outline of its own — it places <em>other</em> glyphs, each as a
+  <strong>component record</strong>: a 16-bit flags word, the referenced glyph's index, then placement
+  args (and, optionally, a transform). The spacing dieresis has <code>numberOfContours = −1</code>, then
+  one such record:</p>
 <pre class="bytemap"><span class="b f0">ff ff</span> <span class="b f1">00 6c 02 50 01 88 02 bd</span> <span class="b f2">00 07</span> <span class="b f3">a4 67</span> <span class="b f4">01 f4 00 00</span></pre>
   <table>
     <tr><th class="mono">bytes</th><th>field</th><th>value</th></tr>
     <tr><td class="mono">ff ff</td><td>numberOfContours</td><td class="mono">−1 ⇒ composite</td></tr>
     <tr><td class="mono">00 6c…02 bd</td><td>bounding box</td><td class="mono">(108,592)…(392,701)</td></tr>
-    <tr><td class="mono">00 07</td><td>component flags</td><td class="mono">ARGS_ARE_WORDS | ARGS_ARE_XY | ROUND_TO_GRID</td></tr>
-    <tr><td class="mono">a4 67</td><td>glyphIndex</td><td class="mono">42087 = "dieresiscomb"</td></tr>
-    <tr><td class="mono">01 f4 00 00</td><td>arg1, arg2 (xy)</td><td class="mono">(500, 0) placement offset</td></tr>
+    <tr><td class="mono">00 07</td><td>component flags (uint16)</td><td class="mono">0x0007 = bits 0,1,2</td></tr>
+    <tr><td class="mono">a4 67</td><td>glyphIndex (uint16)</td><td class="mono">42087 ⇒ "dieresiscomb"</td></tr>
+    <tr><td class="mono">01 f4 00 00</td><td>arg1, arg2 (2 × int16)</td><td class="mono">(500, 0)</td></tr>
   </table>
-  <p>No <code>MORE_COMPONENTS</code> bit ⇒ the only component. The whole glyph is "place
-  <code>dieresiscomb</code> at (500, 0)". <strong>That's why composites matter</strong> for CJK (share a
-  radical) and accented Latin (base + mark): store one outline, reference it many times — saving space and
-  keeping every copy visually identical.</p>
+
+  <p><strong>The flags word drives everything after it.</strong> Just as the simple glyph's coordinate
+  bits set each delta's width, these 16 bits make the component record <em>variable-length</em> — they
+  decide how wide the args are, what the args <em>mean</em>, and whether a transform and further components
+  follow:</p>
+  <table class="mono">
+    <tr><th>bit</th><th>mask</th><th>name</th><th>effect on the record</th></tr>
+    <tr><td>0</td><td>0x0001</td><td>ARG_1_AND_2_ARE_WORDS</td><td>set ⇒ the two args are int16 (2 bytes each); clear ⇒ int8 (1 byte each)</td></tr>
+    <tr><td>1</td><td>0x0002</td><td>ARGS_ARE_XY_VALUES</td><td>set ⇒ args are an (x, y) offset; clear ⇒ args are a point-match pair (see below)</td></tr>
+    <tr><td>2</td><td>0x0004</td><td>ROUND_XY_TO_GRID</td><td>round the placement offset to the integer grid</td></tr>
+    <tr><td>3</td><td>0x0008</td><td>WE_HAVE_A_SCALE</td><td>one F2Dot14 scale follows the args (applied to x and y)</td></tr>
+    <tr><td>5</td><td>0x0020</td><td>MORE_COMPONENTS</td><td>another component record follows; clear ⇒ this is the last</td></tr>
+    <tr><td>6</td><td>0x0040</td><td>WE_HAVE_AN_X_AND_Y_SCALE</td><td>two F2Dot14 scales (sx, sy) follow</td></tr>
+    <tr><td>7</td><td>0x0080</td><td>WE_HAVE_A_TWO_BY_TWO</td><td>a full 2×2 matrix (4 × F2Dot14) follows</td></tr>
+    <tr><td>9</td><td>0x0200</td><td>USE_MY_METRICS</td><td>the composite inherits this component's advance width / lsb</td></tr>
+  </table>
+  <p>Ours is <code>0x0007</code> = bits 0+1+2 ⇒ <code>ARG_1_AND_2_ARE_WORDS | ARGS_ARE_XY_VALUES |
+  ROUND_XY_TO_GRID</code>. So the args are <strong>int16</strong> (that's why <code>01 f4 00 00</code> is
+  4 bytes, not 2), they're an <strong>xy offset</strong>, and that offset is <strong>rounded to the
+  grid</strong>. No scale or 2×2 bit is set ⇒ the transform is the <strong>identity</strong> — pure
+  translation, no scaling or rotation.</p>
+
+  <p><strong>glyphIndex</strong> <code>a4 67</code> = <code>0xa467</code> = <strong>42087</strong> is a raw
+  <em>glyph ID</em> into this same font; index 42087's outline is the combining diaeresis (the readable name
+  "dieresiscomb" comes from <code>post</code>/<code>cmap</code>, not from these bytes). It's resolved through
+  <code>loca</code>/<code>glyf</code> like any glyph — so the reference is <strong>recursive</strong>: a
+  component can itself be a composite, nesting until it bottoms out in real outlines.</p>
+
+  <p><strong>arg1, arg2</strong> <code>01 f4 00 00</code> = <code>(0x01f4, 0x0000)</code> =
+  <strong>(500, 0)</strong>. Because ARGS_ARE_XY_VALUES is set, these are a <strong>placement offset</strong>
+  added to every point of the component before it's drawn (shift the diaeresis mark 500 units right, 0 up).
+  Were that bit <em>clear</em>, the very same two values would instead be a <strong>point-match pair</strong>
+  — "weld point <em>arg1</em> of the glyph-so-far onto point <em>arg2</em> of this component" — the
+  alternative anchoring mechanism some fonts use to snap a mark onto a base.</p>
+
+  <p>No <code>MORE_COMPONENTS</code> bit (0x0020) ⇒ this is the only component. The whole glyph is "place
+  glyph 42087 at offset (500, 0), identity transform." <strong>That's why composites matter</strong> for CJK
+  (share a radical) and accented Latin (base + mark): store one outline, reference it many times — saving
+  space and keeping every copy visually identical.</p>
+
+  <h3>More than one component</h3>
+  <p>A composite usually places <em>several</em> glyphs. There's no count field — the records are simply
+  <strong>concatenated</strong>, and each one's <code>MORE_COMPONENTS</code> bit (0x0020) says "another
+  record follows." The parser loops: read a record, and if that bit was set, read the next; the last record
+  leaves it clear. (Both fonts in this tutorial happen to use only single-component composites, so the bytes
+  below are a <strong>constructed</strong> example — an accented <code>'ä'</code> built as base
+  <code>'a'</code> + the diaeresis mark — but the layout is exactly what a real one looks like:)</p>
+<pre class="bytemap"><span class="b f0">ff ff</span> <span class="b f1">&lt;8 bbox bytes&gt;</span>  <span class="b f2">00 27</span> <span class="b f3">00 79</span> <span class="b f4">00 00 00 00</span>  <span class="b f2">00 07</span> <span class="b f3">a4 67</span> <span class="b f4">01 f4 02 58</span></pre>
+  <table>
+    <tr><th class="mono">bytes</th><th>field</th><th>value</th></tr>
+    <tr><td class="mono">ff ff</td><td>numberOfContours</td><td class="mono">−1 ⇒ composite</td></tr>
+    <tr><td class="mono">&lt;8 bytes&gt;</td><td>bounding box</td><td class="mono">(spans both components)</td></tr>
+    <tr><td class="mono" colspan="3"><strong>component 1 — the base</strong></td></tr>
+    <tr><td class="mono">00 27</td><td>flags</td><td class="mono">0x0027 = bits 0,1,2,<strong>5</strong> ⇒ …| <strong>MORE_COMPONENTS</strong></td></tr>
+    <tr><td class="mono">00 79</td><td>glyphIndex</td><td class="mono">121 = "a"</td></tr>
+    <tr><td class="mono">00 00 00 00</td><td>arg1, arg2</td><td class="mono">(0, 0) — base at the origin</td></tr>
+    <tr><td class="mono" colspan="3"><strong>component 2 — the mark</strong></td></tr>
+    <tr><td class="mono">00 07</td><td>flags</td><td class="mono">0x0007 — <strong>no</strong> MORE_COMPONENTS ⇒ last record</td></tr>
+    <tr><td class="mono">a4 67</td><td>glyphIndex</td><td class="mono">42087 = "dieresiscomb"</td></tr>
+    <tr><td class="mono">01 f4 02 58</td><td>arg1, arg2</td><td class="mono">(500, 600) — mark up over the 'a'</td></tr>
+  </table>
+  <p>Each record is independently flagged, so components can mix widths and transforms — one with int8
+  args and identity, the next with int16 args and a scale. After the <em>final</em> record, one more thing
+  can appear: if any component set <code>WE_HAVE_INSTRUCTIONS</code> (0x0100), a <code>uint16</code>
+  instruction length and that many hinting bytes close out the glyph. Otherwise the glyph ends the moment
+  the MORE_COMPONENTS chain stops.</p>
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">3.7</span><span class="x-kind code">programming</span></div>
