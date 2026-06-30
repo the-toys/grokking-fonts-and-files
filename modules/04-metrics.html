@@ -105,18 +105,33 @@ font[<span class="str">"hhea"</span>].numberOfHMetrics   <span class="cmt"># 468
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">4.3</span><span class="x-kind code">programming</span></div>
-    <p><strong>Read the metrics.</strong> For '一' (U+4E00), 'A', and 'i', resolve each through the best
-    cmap and print its <code>(advance, lsb)</code> from <code>hmtx</code>. Then read
-    <code>unitsPerEm</code> and assert <code>'一'</code>'s advance equals it.</p>
+    <p><strong>Does the grid really hold? Survey every advance.</strong> The text claims <em>every</em> Han
+    glyph advances 1 em and Latin 0.5 em — but it only showed you three cherry-picked glyphs. Trust nothing:
+    histogram the advance width of <strong>all</strong> <code>numGlyphs</code> from <code>hmtx</code> (not
+    just the cmap-reachable ones). How many <em>distinct</em> advance widths does the whole font actually
+    use? List each with its count and its size in em. Does anything show up that the 3-row table above
+    didn't prepare you for — and what kind of glyph would have that advance?</p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
-      <code>getBestCmap()[ord(ch)]</code> → glyph name; <code>font['hmtx'][name]</code> → (advance, lsb);
-      <code>font['head'].unitsPerEm</code> → the em.
+      <code>font['hmtx'].metrics</code> is a <code>{name: (advance, lsb)}</code> dict over <em>all</em>
+      glyphs. <code>from collections import Counter; Counter(a for a, _ in
+      font['hmtx'].metrics.values())</code> buckets them. Divide each width by
+      <code>font['head'].unitsPerEm</code> for the em value.
     </details>
     <details><summary>✓ Check your answer</summary>
-      '一' → <code>(1000, 59)</code>, 'A' → <code>(500, 21)</code>, 'i' → <code>(500, 73)</code>; and
-      <code>1000 == unitsPerEm</code> holds (full-width = exactly 1 em).
+      Exactly <strong>three</strong> distinct advances in all 46,830 glyphs:
+      <code>1000</code> (1.000 em, ×44789), <code>500</code> (0.500 em, ×1973), and — the one the table
+      hid — <code>0</code> (0.000 em, ×68). The 1000/500 split is the whole point: 1 em and its exact
+      half are <em>commensurate</em>, so columns line up (the claim holds — all 20,992 Han chars in the
+      cmap are exactly 1 em, no exceptions). The <strong>zero-width</strong> bucket is the surprise: those
+      are <strong>combining marks</strong> (e.g. <code>dieresiscomb</code> from Module 3) — they carry no
+      advance because they stack onto the previous glyph instead of moving the pen.
     </details>
-    <p class="check-note">Self-check above — or paste your output to your tutor.</p>
+    <details><summary>Going further (optional)</summary>
+      For a simple (non-composite) glyph, the stored <code>lsb</code> should equal the outline's
+      <code>xMin</code> from <code>glyf</code>. Check it on a handful — it connects two tables: the spacing
+      in <code>hmtx</code> and the ink in <code>glyf</code> are describing the same left edge.
+    </details>
+    <p class="check-note">Self-check above — or paste your histogram to your tutor.</p>
   </div>
 
   <div class="exercise">
@@ -143,12 +158,15 @@ font[<span class="str">"hhea"</span>].numberOfHMetrics   <span class="cmt"># 468
   be commensurate.)</p>
 
   <div class="callout proof">
-    <span class="label">This is build.py's safety check</span>
-    Both WenKai <em>and</em> ZhenKai advance <code>'一'</code> at <strong>1000/1000 = 1.000 em</strong>.
-    That equality is why <code>lxgw-wenkai-zhenkai/build.py</code> can drop ZhenKai in as the bold without
-    <strong>re-metricizing</strong>: if both faces make every Han glyph one em wide, CJK columns stay
-    aligned after a regular→bold swap. The script prints this advance/unitsPerEm comparison as its sanity
-    check before assembling the hybrid.
+    <span class="label">Why this matters: merging two faces into one family</span>
+    Imagine we want to weld the two fonts shipped with this tutorial into a single family — <strong>LXGW
+    WenKai as the Regular, LXGW ZhenKai as the Bold</strong> — so that bold is a <em>genuine second
+    face</em> instead of a synthetic faux-bold smear. For a regular→bold swap to leave CJK columns aligned,
+    every Han glyph must advance the <em>same width</em> in both faces. And it does: both advance
+    <code>'一'</code> at exactly <strong>1000/1000 = 1.000 em</strong>. So the merge can reuse the metrics
+    as-is, with <strong>no re-metricizing</strong> — checking that advance/unitsPerEm equality across the
+    two faces is exactly the sanity check you'd run before assembling such a hybrid. (We'll actually build
+    this family in Module 5.)
   </div>
 
   <h3>Line height: three competing ascent/descent sets</h3>
@@ -256,9 +274,10 @@ font[<span class="str">"hhea"</span>].numberOfHMetrics   <span class="cmt"># 468
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">4.7</span><span class="x-kind code">programming</span></div>
-    <p><strong>Verify build.py's alignment guarantee.</strong> Load <em>both</em> source fonts (WenKai and
-    ZhenKai) and, for each, compute <code>'一'</code>'s advance ÷ <code>unitsPerEm</code>. Print both
-    ratios and confirm they're equal (and 1.0) — the guarantee that lets ZhenKai become the bold without
+    <p><strong>Could these two fonts merge without re-metricizing?</strong> Say we want to combine the
+    tutorial's two fonts into one family — WenKai as Regular, ZhenKai as Bold. Load <em>both</em> source
+    fonts and, for each, compute <code>'一'</code>'s advance ÷ <code>unitsPerEm</code>. Print both ratios
+    and confirm they're equal (and 1.0) — the precondition that lets ZhenKai stand in as the bold without
     re-metricizing. Bonus: <code>dir()</code> the <code>hhea</code> and <code>OS/2</code> tables and find
     two fields you hadn't used.</p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
@@ -269,7 +288,7 @@ font[<span class="str">"hhea"</span>].numberOfHMetrics   <span class="cmt"># 468
     <details><summary>✓ Check your answer</summary>
       Both ratios are <strong>1.0</strong> (each font advances '一' at exactly one em), so a regular→bold
       swap keeps every full-width column the same width — no advance needs recomputing. That equality is
-      build.py's whole justification for not re-metricizing.
+      the whole justification for merging the two faces without re-metricizing.
     </details>
     <p class="check-note">Self-check above — or paste both ratios to your tutor.</p>
   </div>
