@@ -11,15 +11,17 @@
 <main>
   <p class="eyebrow">Module 05</p>
   <h1>Identity &amp; families</h1>
-  <p class="lede">Where does the "bold" button get its glyphs? Not from a config file — from
-  metadata baked into each font's <code>name</code>, <code>OS/2</code> and <code>head</code> tables.
-  This module dissects that metadata in real WenKai, then shows the exact trick
-  <code>build.py</code> uses to weld two unrelated fonts into one family with a <em>real</em> bold —
-  by editing four small tables and never moving a glyph.</p>
+  <p class="lede">Click <strong>bold</strong> in any app and the glyphs change. Where do they come from?
+  Not a config file — from metadata baked into each font's <code>name</code>, <code>OS/2</code> and
+  <code>head</code> tables. This module reads that metadata out of real WenKai, then uses it for a concrete
+  goal: <strong>weld two unrelated fonts — WenKai and ZhenKai — into one family</strong> whose bold is a
+  <em>real, drawn</em> second face, by editing four small tables and never moving a glyph.</p>
+  <p class="legend">Exercises are <strong>interleaved</strong> — each sits under the field it tests. Concept
+  ones have a solution; programming ones have a collapsible <strong>✓ Check your answer</strong>.</p>
 
-  <!-- ───────────────────────── CONCEPT ───────────────────────── -->
-  <span class="section-tag concept">concept</span>
-  <h2>How separate files become one family</h2>
+  <!-- ───────────────────────── 1. the stakes ───────────────────────── -->
+  <span class="section-tag concept">concept · 1</span>
+  <h2>A family is metadata, not a config file</h2>
 
   <p>You think of "a font family" as one thing with several weights. On disk it is usually
   <strong>several independent files</strong> — one per weight/style. Nothing physically connects
@@ -35,8 +37,30 @@
     the metadata and you change the family — without touching a single outline.
   </div>
 
-  <h3>The <code>name</code> table: records keyed by four IDs</h3>
-  <p>The <code>name</code> table is a bag of strings. Each record is keyed by a tuple
+  <p>Why does any of this matter? Because if you get it wrong, the bold button still does <em>something</em>
+  — something ugly:</p>
+
+  <div class="callout warn">
+    <span class="label">The stakes: faux bold is ugly</span>
+    If an app asks for bold and the family has <strong>no real bold face</strong>, many renderers
+    synthesize one: they algorithmically <em>smear</em> (embolden) or <em>slant</em> (oblique) the
+    Regular outlines. The result — "faux bold" / "faux italic" — is uneven and crude compared to a
+    drawn bold. <strong>Shipping a real bold face, and labelling it so the OS finds it, is the entire
+    job of this module.</strong> Every field below exists to make the OS pick ZhenKai — a genuinely
+    drawn heavier Kai — when you ask WenKai for bold.
+  </div>
+
+  <p>So the plan is concrete: take two unrelated files, and edit just enough metadata that the OS sees
+  <em>one</em> family with a real Regular and a real Bold. The next four sections introduce each field as
+  the answer to one question — <em>what groups the files? which one is bold? how is "bold" stored? how do
+  pickers know it's monospace?</em> — and then we do the retag for real.</p>
+
+  <!-- ───────────────────────── 2. name table ───────────────────────── -->
+  <span class="section-tag concept">concept · 2</span>
+  <h2>The <code>name</code> table: what groups two files into one family</h2>
+
+  <p>First question: <strong>what does the OS key on to decide two files belong together?</strong> The
+  answer lives in the <code>name</code> table — a bag of strings. Each record is keyed by a tuple
   <code>(platformID, encodingID, languageID, nameID)</code>, so the same logical string can exist in
   many encodings and languages. The <code>nameID</code> says <em>what</em> the string means:</p>
   <table>
@@ -48,20 +72,46 @@
     <tr><td class="mono">6</td><td>PostScript name</td><td>ASCII, <strong>no spaces</strong>, must be globally unique</td></tr>
     <tr><td class="mono">16 / 17</td><td>Typographic family / subfamily</td><td><strong>override 1/2 when present</strong>; used for families with &gt;4 styles</td></tr>
   </table>
-  <p>The 1/2 pair can only express the four RIBBI styles, because <code>2</code> is restricted to that
-  set. A family with Light, Medium, SemiBold… needs 16/17, which let the real names live free while
-  1/2 keep a legacy app happy by collapsing everything onto Regular/Bold. <strong>When 16/17 exist,
-  they win.</strong> Remember that — it is the lever <code>build.py</code> pulls.</p>
+  <p>The mechanism that groups files is simple: <strong>same nameID&nbsp;1 (Family), different nameID&nbsp;2
+  (Subfamily).</strong> Give two files the identical family string and label one "Regular" and the other
+  "Bold", and the OS files them under one family with two faces. That shared family name is the glue we'll
+  use.</p>
+  <p>One catch worth banking now, because it bites us at the end. The 1/2 pair can only express the four
+  RIBBI styles, because <code>2</code> is restricted to that set. A family with Light, Medium, SemiBold…
+  needs <strong>16/17</strong>, which let the real names live free while 1/2 keep a legacy app happy by
+  collapsing everything onto Regular/Bold. <strong>When 16/17 exist, they win</strong> — so if either source
+  font carries them, they'd override our 1/2 and re-split the two files apart. That makes "drop 16/17" a step
+  in the merge, not an afterthought.</p>
 
-  <h3><code>OS/2.usWeightClass</code>: the number "bold" selects</h3>
-  <p>Weight is a plain number in <code>OS/2.usWeightClass</code>: <code>400</code> = Regular,
-  <code>700</code> = Bold (the scale runs 100–900). When an app "asks for bold" it is, under the hood,
-  asking the family for the face whose weight class is 700. Get this number wrong and the bold button
-  selects the wrong file — or nothing.</p>
+  <!-- ───────────────────────── 3. weight ───────────────────────── -->
+  <span class="section-tag concept">concept · 3</span>
+  <h2><code>OS/2.usWeightClass</code>: the number "bold" selects</h2>
+  <p>Now the OS sees one family with two faces. Second question: <strong>when the user clicks bold, which
+  of the two does it pick?</strong> By a number. Weight is a plain integer in
+  <code>OS/2.usWeightClass</code>: <code>400</code> = Regular, <code>700</code> = Bold (the scale runs
+  100–900). When an app "asks for bold" it is, under the hood, asking the family for the face whose weight
+  class is 700. Get this number wrong and the bold button selects the wrong file — or nothing.</p>
 
-  <h3>Style bits, stored twice — and cross-checked</h3>
-  <p>The bold/italic facts are also stored as <strong>bit flags, redundantly, in two tables</strong>,
-  and renderers cross-check the two. They must agree:</p>
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.3</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Family glue, in your own words.</strong> You now know the two fields that do the grouping.
+    In 2–3 sentences, explain how two physically separate font files end up in the same "family" with a
+    working bold — and name the specific metadata that does it.</p>
+    <details><summary>Show solution</summary>
+      Both files carry the <strong>same nameID&nbsp;1 family string</strong> but different nameID&nbsp;2
+      subfamilies ("Regular" vs "Bold") and different <code>OS/2.usWeightClass</code> (400 vs 700), with
+      matching <code>fsSelection</code>/<code>macStyle</code> style bits. The OS's font system
+      (CoreText / DirectWrite / fontconfig) groups files by family name and routes a request for "bold"
+      to the face advertising weight 700 — no config file involved.
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 4. style bits ───────────────────────── -->
+  <span class="section-tag concept">concept · 4</span>
+  <h2>Style bits, stored twice — and cross-checked</h2>
+  <p>The subfamily name and weight number aren't the only places "this is bold" is recorded. The bold/italic
+  facts are <em>also</em> stored as <strong>bit flags, redundantly, in two tables</strong>, and renderers
+  cross-check the two. They must agree:</p>
   <table>
     <tr><th>field</th><th>bit</th><th>value</th><th>meaning</th></tr>
     <tr><td class="mono">OS/2.fsSelection</td><td>0</td><td class="mono">0x01</td><td>ITALIC</td></tr>
@@ -71,29 +121,53 @@
     <tr><td class="mono">head.macStyle</td><td>1</td><td class="mono">0x02</td><td>ITALIC</td></tr>
   </table>
   <p>If <code>fsSelection</code> says BOLD but <code>macStyle</code> says not-bold, you have an
-  inconsistent face: different platforms read different tables and disagree about what the file is.</p>
+  inconsistent face: different platforms read different tables and disagree about what the file is. So our
+  retag will have to write <em>both</em>, coherently.</p>
 
-  <h3>PANOSE &amp; the monospace flags</h3>
-  <p><code>OS/2.panose</code> is 10 bytes of coarse visual classification (serif style, weight,
-  proportion…). The byte that matters here is index&nbsp;3, <strong>bProportion</strong>:
-  <code>9</code>=Monospaced, <code>3</code>=Modern (proportional). The other flag apps inspect for
-  "is this monospace?" is <code>post.isFixedPitch</code>. Note both are <em>advertisements</em> — they
-  describe the font, they do not <em>make</em> it monospaced (the advance widths do that, Module&nbsp;4).</p>
-
-  <div class="callout warn">
-    <span class="label">Faux bold is ugly</span>
-    If an app asks for bold and the family has <strong>no real bold face</strong>, many renderers
-    synthesize one: they algorithmically <em>smear</em> (embolden) or <em>slant</em> (oblique) the
-    Regular outlines. The result — "faux bold" / "faux italic" — is uneven and crude compared to a
-    drawn bold. Shipping a real bold face is the whole point of getting the family metadata right.
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.1</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Decode the selection bits.</strong> WenKai's <code>OS/2.fsSelection</code> is
+    <code>0b1000000</code>. Which bit is set, and what does it mean? What would
+    <code>0b0100000</code> mean instead?</p>
+    <details><summary>Show solution</summary>
+      <code>0b1000000</code> = bit&nbsp;6 set = <strong>REGULAR</strong> (0x40) — the value WenKai
+      carries as the Regular face. <code>0b0100000</code> = bit&nbsp;5 set = <strong>BOLD</strong>
+      (0x20) — what we set on ZhenKai in the merge. (Bit&nbsp;0 = ITALIC, 0x01.)
+    </details>
   </div>
 
-  <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
-  <span class="section-tag walk">walkthrough</span>
-  <h2>WenKai's real identity, then the <code>build.py</code> retag</h2>
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.2</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Two places for one fact.</strong> Why does the format store the bold flag in
+    <em>both</em> <code>OS/2.fsSelection</code> <em>and</em> <code>head.macStyle</code>? What is the risk
+    if they disagree?</p>
+    <details><summary>Show solution</summary>
+      Historical layering: <code>head.macStyle</code> is the old Apple/TrueType style field;
+      <code>OS/2.fsSelection</code> is the later Windows/OpenType one. Both survive, and different
+      renderers/platforms read different ones. If they disagree the face is <strong>inconsistent</strong>
+      — one platform treats it as bold, another as regular, so it may be selected for the wrong slot or
+      get faux-styled. That is why the merge writes both coherently.
+    </details>
+  </div>
 
-  <p>Here is WenKai's source identity, read straight out of
-  <code>LXGWWenKaiMonoGB-Regular.ttf</code>:</p>
+  <!-- ───────────────────────── 5. panose ───────────────────────── -->
+  <span class="section-tag concept">concept · 5</span>
+  <h2>PANOSE &amp; the monospace flags</h2>
+  <p>One last piece of identity, because this is a <em>monospace</em> family and font pickers let you filter
+  for that. A picker doesn't measure glyphs — it reads an <em>advertisement</em>. <code>OS/2.panose</code> is
+  10 bytes of coarse visual classification (serif style, weight, proportion…). The byte that matters here is
+  index&nbsp;3, <strong>bProportion</strong>: <code>9</code>=Monospaced, <code>3</code>=Modern
+  (proportional). The other flag apps inspect for "is this monospace?" is <code>post.isFixedPitch</code>.
+  Note both are <em>advertisements</em> — they describe the font, they do not <em>make</em> it monospaced
+  (the advance widths do that, Module&nbsp;4). The retag must set them so the hybrid still shows up under a
+  monospace filter.</p>
+
+  <!-- ───────────────────────── 6. the retag walkthrough ───────────────────────── -->
+  <span class="section-tag walk">walkthrough · 6</span>
+  <h2>WenKai's real identity, then retagging it into a family</h2>
+
+  <p>That's every field we need. Here is WenKai's source identity, read straight out of
+  <code>LXGWWenKaiMonoGB-Regular.ttf</code> — each row is a field from the sections above:</p>
   <table>
     <tr><th>field</th><th>value</th><th>meaning</th></tr>
     <tr><td class="mono">OS/2 version</td><td class="mono">4</td><td>the table layout / feature level</td></tr>
@@ -114,12 +188,31 @@
     <tr><td class="mono">6 (PostScript)</td><td class="mono">"LXGWWenKaiMonoGB-Regular"</td></tr>
   </table>
 
-  <p>Now the trick. We have two <em>unrelated</em> files: WenKai (a light, calligraphic Kai) and
-  ZhenKai (a heavier Kai). We want one family <code>"LXGW WenKai ZhenKai Mono GB"</code> in which
-  Regular = WenKai and Bold = ZhenKai. <code>build.py</code>'s <code>build_face()</code> re-labels each
-  file so the OS groups them. Step by step, with the real code:</p>
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.4</span><span class="x-kind code">programming</span></div>
+    <p><strong>Read the identity yourself.</strong> Before we change anything, confirm the starting state.
+    Using fontTools, open WenKai and print <code>usWeightClass</code>, <code>bin(fsSelection)</code>,
+    <code>bin(head.macStyle)</code>, and name IDs 1/2/6. Match them against the two tables above.</p>
+    <pre><code><span class="cmt"># python this.py LXGWWenKaiMonoGB-Regular.ttf</span>
+<span class="kw">import</span> sys
+<span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+f = TTFont(sys.argv[<span class="num">1</span>])
+os2, head, name = f[<span class="str">"OS/2"</span>], f[<span class="str">"head"</span>], f[<span class="str">"name"</span>]
+<span class="fn">print</span>(<span class="str">"usWeightClass"</span>, os2.usWeightClass)
+<span class="fn">print</span>(<span class="str">"fsSelection  "</span>, <span class="fn">bin</span>(os2.fsSelection))
+<span class="fn">print</span>(<span class="str">"macStyle     "</span>, <span class="fn">bin</span>(head.macStyle))
+<span class="kw">for</span> i <span class="kw">in</span> (<span class="num">1</span>, <span class="num">2</span>, <span class="num">6</span>):
+    <span class="fn">print</span>(<span class="str">"name"</span>, i, repr(name.getDebugName(i)))</code></pre>
+    <p class="check-note">Paste your output — I'll confirm usWeightClass=400, fsSelection=0b1000000,
+    macStyle=0b0, and the three name strings against the table.</p>
+  </div>
 
-  <h3>1 · Same family, different subfamily</h3>
+  <p>Now the retag. We have two <em>unrelated</em> files: WenKai (a light, calligraphic Kai) and
+  ZhenKai (a heavier Kai). We want one family <code>"LXGW WenKai ZhenKai Mono GB"</code> in which
+  Regular = WenKai and Bold = ZhenKai. We'll write a small routine — call it <code>build_face()</code> —
+  that re-labels each file so the OS groups them. Each step writes one field you just met:</p>
+
+  <h3>1 · Same family, different subfamily <span class="legend">(concept 2)</span></h3>
   <p>Both files are given the <strong>identical</strong> <code>FAMILY</code> string in nameID&nbsp;1,
   but different nameID&nbsp;2:</p>
 <pre><code>set_name(font, NAME_FAMILY, family)      <span class="cmt"># id 1 — SAME on both files</span>
@@ -130,14 +223,14 @@ set_name(font, NAME_SUBFAMILY, style)    <span class="cmt"># id 2 — "Regular" 
   same ID, so no leftover original string lingers (this is why <code>value</code> must be ASCII: the
   Mac record can encode it).</p>
 
-  <h3>2 · The weight number</h3>
+  <h3>2 · The weight number <span class="legend">(concept 3)</span></h3>
 <pre><code>os2.usWeightClass = weight   <span class="cmt"># 400 for WenKai, 700 for ZhenKai</span></code></pre>
   <p>This is literally what the bold button resolves against: ask <code>FAMILY</code> for weight 700
   and you are handed ZhenKai.</p>
 
-  <h3>3 · The style bits, in both places</h3>
-  <p><code>build.py</code> clears the three mutually-exclusive selection bits, then sets exactly one,
-  and mirrors the bold bit into <code>macStyle</code> so the two tables agree:</p>
+  <h3>3 · The style bits, in both places <span class="legend">(concept 4)</span></h3>
+  <p>We clear the three mutually-exclusive selection bits, then set exactly one,
+  and mirror the bold bit into <code>macStyle</code> so the two tables agree:</p>
 <pre><code>os2.fsSelection &amp;= ~(FS_ITALIC | FS_BOLD | FS_REGULAR)
 os2.fsSelection |= FS_BOLD if bold else FS_REGULAR   <span class="cmt"># 0x20 or 0x40</span>
 head.macStyle  &amp;= ~(MAC_BOLD | MAC_ITALIC)
@@ -156,115 +249,36 @@ if bold:
     so it works on macOS and Windows too.
   </div>
 
-  <h3>4 · Advertise monospace without moving a glyph</h3>
+  <h3>4 · Advertise monospace without moving a glyph <span class="legend">(concept 5)</span></h3>
 <pre><code>post.isFixedPitch = 1 if monospace else 0
 if getattr(os2, "panose", None) is not None:
     os2.panose.bProportion = 9 if monospace else 3   <span class="cmt"># 9=Mono, 3=Modern</span></code></pre>
   <p>This only flips the two <em>flags</em> a font picker filters on. It moves <strong>no</strong>
   advance width — and it doesn't need to, because the CJK glyphs are already full-width
-  (advance == 1 em, Module&nbsp;4). The build script even proves the equality at runtime, printing
-  ZhenKai's <code>一</code> advance as <code>1000/1000 em</code> = WenKai's — identical, so bold CJK
-  columns align with regular and no re-metricizing is required.</p>
+  (advance == 1 em, Module&nbsp;4). We already proved that equality in Module&nbsp;4: ZhenKai advances
+  <code>一</code> at <code>1000/1000 em</code> = WenKai's — identical, so bold CJK columns align with
+  regular and no re-metricizing is required.</p>
 
-  <h3>5 · Unique IDs, and dropping 16/17</h3>
-  <p>The PostScript and Unique-ID strings are derived from the family so every face/alias gets a
-  distinct identity, and the typographic names are removed so the simple RIBBI grouping (1/2) wins:</p>
+  <h3>5 · Give each face a unique name — 3 &amp; 6 <span class="legend">so the hybrid can't collide with the originals</span></h3>
 <pre><code>ps_name = f"{family.replace(' ', '')}-{style}"   <span class="cmt"># e.g. LXGWWenKaiZhenKaiMonoGB-Bold</span>
-set_name(font, NAME_UNIQUE, ps_name)             <span class="cmt"># id 3 — break the dedup tie</span>
-set_name(font, NAME_PS, ps_name)                 <span class="cmt"># id 6 — ASCII, no spaces</span>
-font["name"].removeNames(nameID=NAME_TYPO_FAMILY)     <span class="cmt"># drop id 16</span>
+set_name(font, NAME_UNIQUE, ps_name)             <span class="cmt"># id 3 — Unique ID</span>
+set_name(font, NAME_PS, ps_name)                 <span class="cmt"># id 6 — PostScript name (ASCII, no spaces)</span></code></pre>
+  <p><code>nameID 6</code> (PostScript name) and <code>3</code> (Unique ID) are meant to be
+  <strong>globally unique</strong> — macOS CoreText uses them as a font's <em>identity key</em>. You almost
+  certainly still have the original WenKai and ZhenKai installed, so if our relabelled Regular member kept
+  WenKai's original name <code>"LXGWWenKaiMonoGB-Regular"</code>, two files would claim the same identity.
+  CoreText keeps only <em>one font per PostScript name</em>, so it deduplicates — and may keep the original,
+  not ours. A request for our family then silently resolves to the <strong>wrong file</strong>: the hybrid
+  doesn't render, or the Regular↔Bold link breaks because the member it needed got shadowed. Deriving each
+  name from the new family gives every face a distinct identity that coexists with the originals.</p>
+
+  <h3>6 · Drop the typographic names — 16 &amp; 17 <span class="legend">so the simple RIBBI names win</span></h3>
+<pre><code>font["name"].removeNames(nameID=NAME_TYPO_FAMILY)     <span class="cmt"># drop id 16</span>
 font["name"].removeNames(nameID=NAME_TYPO_SUBFAMILY)  <span class="cmt"># drop id 17</span></code></pre>
-
-  <div class="callout warn">
-    <span class="label">Why 3 and 6 must be unique — a real bug</span>
-    On macOS, CoreText keys faces partly on the Unique ID (3) and PostScript name (6). If our relabelled
-    file kept the <em>original's</em> ID 3/6, CoreText could <strong>dedup or shadow</strong> ours
-    against the still-installed original — and serve the <em>wrong file</em> for the family (a real
-    font-priority bug). Each alias therefore gets its own unique 3/6. And the typographic names
-    16/17 are <strong>removed</strong> because if present they would override our 1/2 and re-split the
-    two files apart, defeating the Regular+Bold grouping.
-  </div>
-
-  <h3>What it deliberately does NOT touch</h3>
-  <p>Everything above lives in just four tables: <code>name</code>, <code>OS/2</code>, <code>head</code>,
-  <code>post</code>. The heavy tables — <code>glyf</code>, <code>cmap</code>, <code>hmtx</code> — are left
-  <strong>byte-identical</strong>. This is Module&nbsp;1's lesson cashing in: tables are independent
-  blobs, so you rewrite a few kilobytes of metadata and leave 24&nbsp;MB of outlines untouched. It is
-  also what makes the shared-table <code>.ttc</code> possible: because every Regular face has the exact
-  same <code>glyf</code> bytes (and every Bold face likewise), the collection writer can store that
-  outline data <em>once</em> — the setup for Module&nbsp;7.</p>
-
-  <div class="callout proof">
-    <span class="label">See it for yourself</span>
-    <code>specimens/extract.py LXGWWenKaiMonoGB-Regular.ttf</code> prints usWeightClass, fsSelection,
-    macStyle, PANOSE and the name records shown above. Run <code>build.py</code> and watch it print the
-    <code>一</code> advance equality before it writes <code>LXGWHybrid.ttc</code>.
-  </div>
-
-  <!-- ───────────────────────── EXERCISES ───────────────────────── -->
-  <span class="section-tag ex">exercises</span>
-  <h2>Exercises</h2>
-  <p class="legend">Attempt each, then paste your answer/output to your tutor to check.
-  Hints &amp; self-check solutions are collapsible.</p>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">5.1</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Decode the selection bits.</strong> WenKai's <code>OS/2.fsSelection</code> is
-    <code>0b1000000</code>. Which bit is set, and what does it mean? What would
-    <code>0b0100000</code> mean instead?</p>
-    <details><summary>Show solution</summary>
-      <code>0b1000000</code> = bit&nbsp;6 set = <strong>REGULAR</strong> (0x40) — the value WenKai
-      carries as the Regular face. <code>0b0100000</code> = bit&nbsp;5 set = <strong>BOLD</strong>
-      (0x20) — what <code>build.py</code> sets on ZhenKai. (Bit&nbsp;0 = ITALIC, 0x01.)
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">5.2</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Two places for one fact.</strong> Why does the format store the bold flag in
-    <em>both</em> <code>OS/2.fsSelection</code> <em>and</em> <code>head.macStyle</code>? What is the risk
-    if they disagree?</p>
-    <details><summary>Show solution</summary>
-      Historical layering: <code>head.macStyle</code> is the old Apple/TrueType style field;
-      <code>OS/2.fsSelection</code> is the later Windows/OpenType one. Both survive, and different
-      renderers/platforms read different ones. If they disagree the face is <strong>inconsistent</strong>
-      — one platform treats it as bold, another as regular, so it may be selected for the wrong slot or
-      get faux-styled. That is why <code>build.py</code> writes both coherently.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">5.3</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Family glue, in your own words.</strong> In 2–3 sentences, explain how two physically
-    separate font files end up in the same "family" with a working bold — and name the specific
-    metadata that does it.</p>
-    <details><summary>Show solution</summary>
-      Both files carry the <strong>same nameID&nbsp;1 family string</strong> but different nameID&nbsp;2
-      subfamilies ("Regular" vs "Bold") and different <code>OS/2.usWeightClass</code> (400 vs 700), with
-      matching <code>fsSelection</code>/<code>macStyle</code> style bits. The OS's font system
-      (CoreText / DirectWrite / fontconfig) groups files by family name and routes a request for "bold"
-      to the face advertising weight 700 — no config file involved.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">5.4</span><span class="x-kind code">programming</span></div>
-    <p><strong>Read the identity yourself.</strong> Using fontTools, open WenKai and print
-    <code>usWeightClass</code>, <code>bin(fsSelection)</code>, <code>bin(head.macStyle)</code>, and name
-    IDs 1/2/6. Confirm them against the walkthrough table.</p>
-    <pre><code><span class="cmt"># python this.py LXGWWenKaiMonoGB-Regular.ttf</span>
-<span class="kw">import</span> sys
-<span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
-f = TTFont(sys.argv[<span class="num">1</span>])
-os2, head, name = f[<span class="str">"OS/2"</span>], f[<span class="str">"head"</span>], f[<span class="str">"name"</span>]
-<span class="fn">print</span>(<span class="str">"usWeightClass"</span>, os2.usWeightClass)
-<span class="fn">print</span>(<span class="str">"fsSelection  "</span>, <span class="fn">bin</span>(os2.fsSelection))
-<span class="fn">print</span>(<span class="str">"macStyle     "</span>, <span class="fn">bin</span>(head.macStyle))
-<span class="kw">for</span> i <span class="kw">in</span> (<span class="num">1</span>, <span class="num">2</span>, <span class="num">6</span>):
-    <span class="fn">print</span>(<span class="str">"name"</span>, i, repr(name.getDebugName(i)))</code></pre>
-    <p class="check-note">Paste your output — I'll confirm usWeightClass=400, fsSelection=0b1000000,
-    macStyle=0b0, and the three name strings against the table.</p>
-  </div>
+  <p>Recall from concept 2 that <strong>16/17 override 1/2 when present</strong>. If either source font
+  still carries them, the OS reads each file's <em>original</em> typographic family — splitting the two
+  files right back into their separate families and undoing the Regular+Bold grouping we just built.
+  Stripping 16/17 forces the OS onto our simple RIBBI (1/2) names.</p>
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">5.5</span><span class="x-kind concept">concept</span></div>
@@ -280,9 +294,28 @@ os2, head, name = f[<span class="str">"OS/2"</span>], f[<span class="str">"head"
     </details>
   </div>
 
+  <!-- ───────────────────────── 7. what it doesn't touch ───────────────────────── -->
+  <span class="section-tag concept">concept · 7</span>
+  <h2>What the retag deliberately does NOT touch</h2>
+  <p>Everything above lives in just four tables: <code>name</code>, <code>OS/2</code>, <code>head</code>,
+  <code>post</code>. The heavy tables — <code>glyf</code>, <code>cmap</code>, <code>hmtx</code> — are left
+  <strong>byte-identical</strong>. This is Module&nbsp;1's lesson cashing in: tables are independent
+  blobs, so you rewrite a few kilobytes of metadata and leave 24&nbsp;MB of outlines untouched. It is
+  also what makes the shared-table <code>.ttc</code> possible: because every Regular face has the exact
+  same <code>glyf</code> bytes (and every Bold face likewise), the collection writer can store that
+  outline data <em>once</em> — the setup for Module&nbsp;7.</p>
+
+  <div class="callout proof">
+    <span class="label">See it for yourself</span>
+    <code>specimens/extract.py LXGWWenKaiMonoGB-Regular.ttf</code> prints usWeightClass, fsSelection,
+    macStyle, PANOSE and the name records shown above — the inputs to the retag. Apply the six steps
+    above to a copy of each file and you've assembled the family yourself; Module&nbsp;7 then packs the
+    relabelled faces into a single <code>.ttc</code>.
+  </div>
+
   <div class="exercise">
     <div class="x-head"><span class="x-id">5.6</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Capstone-lite: the table ledger.</strong> List exactly which tables <code>build.py</code>
+    <p><strong>Capstone-lite: the table ledger.</strong> List exactly which tables the merge
     modifies and which it deliberately leaves untouched. Why does leaving <code>glyf</code>/<code>hmtx</code>
     untouched preserve terminal column alignment (Module&nbsp;4), and how does it enable the shared-table
     TTC (Module&nbsp;7)?</p>
