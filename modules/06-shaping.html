@@ -168,6 +168,95 @@ pixels</code></pre>
     script / feature / lookup figures. Exercise 6.4 below walks the same tables by hand with fontTools.
   </div>
 
+  <!-- ───────────────────────── GALLERY: GSUB ───────────────────────── -->
+  <span class="section-tag walk">walkthrough · what it actually does</span>
+  <h2>GSUB in action: before → after glyph runs</h2>
+
+  <p>Feature tags are abstract until you watch them rewrite a run. Every row below is a <strong>real
+  substitution from this font</strong>, produced by shaping the string through HarfBuzz and diffing the
+  glyph run against the naïve <code>cmap</code> output. Read each as <em>what the glyph IDs were</em> →
+  <em>what GSUB turned them into</em>. Watch the <strong>count change</strong> — that's the GSUB signature.</p>
+
+  <table class="mono">
+    <tr><th>feature</th><th>you type</th><th>glyph run: before → after</th><th>what happened</th></tr>
+    <tr><td>frac</td><td>1/2</td><td><code>[one, slash, two]</code> → <code>[onehalf.full]</code></td><td>3 glyphs collapse to <strong>one</strong> ½</td></tr>
+    <tr><td>frac</td><td>3/4</td><td><code>[three, slash, four]</code> → <code>[threequarters.full]</code></td><td>same rule, any numerator/denominator → ¾</td></tr>
+    <tr><td>afrc</td><td>1/2</td><td><code>[one, slash, two]</code> → <code>[one_fraction_two.nut]</code></td><td>the <em>stacked</em> "nut" fraction (numerator over denominator)</td></tr>
+    <tr><td>sups</td><td>2</td><td><code>[two]</code> → <code>[twosuperior]</code></td><td>1→1 swap to the raised superscript ²</td></tr>
+    <tr><td>subs</td><td>3</td><td><code>[three]</code> → <code>[threeinferior]</code></td><td>1→1 swap to the lowered subscript ₃</td></tr>
+    <tr><td>ccmp</td><td>A + ◌̀</td><td><code>[A, gravecomb]</code> → <code>[Agrave]</code></td><td><strong>compose</strong>: base + separate combining mark <em>merged</em> into one precomposed À so the accent sits perfectly</td></tr>
+    <tr><td>ccmp</td><td>⸺ (2-em dash)</td><td><code>[twoemdash]</code> → <code>[emdash.ccmp, emdash]</code></td><td><strong>decompose</strong>: 1 glyph <em>expands</em> to a seamless multi-dash run so the rule connects at any length</td></tr>
+    <tr><td>vert</td><td>。 (vertical text)</td><td><code>[ideographicfullstop]</code> → <code>[…verticalideographicfullstop]</code></td><td>swap to the glyph's <em>vertical form</em> (the stop moves to the cell's top-right)</td></tr>
+    <tr><td>salt</td><td>(user picks)</td><td><code>[glyph]</code> → <code>[glyph.salt]</code></td><td>a user-selectable <em>stylistic alternate</em> shape — same character, different drawing</td></tr>
+  </table>
+
+  <p class="legend">The <code>.full</code> / <code>.nut</code> / <code>.salt</code> suffixes are just glyph
+  names — an alternate glyph the font ships specifically for that feature. GSUB's whole job is choosing
+  <em>which</em> glyph name each position resolves to.</p>
+
+  <div class="callout key">
+    <span class="label">GSUB substitution types — the four shapes a rule can take</span>
+    Every substitution above is one of a handful of lookup types: <strong>single</strong> (1→1, e.g.
+    <code>sups</code>, <code>vert</code>, <code>salt</code>), <strong>multiple</strong> (1→many, the
+    <code>ccmp</code> dash <em>decompose</em>), <strong>ligature</strong> (many→1, <code>frac</code> and
+    the <code>ccmp</code> À <em>compose</em>), and <strong>contextual / chaining</strong> (swap only when
+    neighbours match, which is how <code>calt</code> and most script logic work). WenKai's 12 GSUB lookups
+    are exactly these types (single ×5, multiple, ligature ×3, chaining ×2).
+  </div>
+
+  <p>Beyond what <em>this</em> font ships, the same machinery powers the classics — worth knowing even
+  though WenKai doesn't declare them:</p>
+  <ul>
+    <li><strong><code>liga</code> — <code>f</code>+<code>i</code> → a single <code>fi</code></strong>
+      glyph, so the dotless collision is drawn as one shape (many→1, like <code>frac</code>).</li>
+    <li><strong>Arabic joining</strong> — one letter becomes <em>four</em> glyphs by position
+      (isolated / initial / medial / final); the shaper picks the contextual form so letters connect.</li>
+    <li><strong>Indic reordering</strong> — a vowel typed <em>after</em> a consonant is substituted and
+      <em>moved before</em> it, and consonant clusters fuse into conjunct glyphs. Mandatory, not cosmetic.</li>
+  </ul>
+
+  <!-- ───────────────────────── GALLERY: GPOS ───────────────────────── -->
+  <h2>GPOS in action: same glyphs, moved</h2>
+
+  <p>GPOS never changes <em>which</em> glyphs you have — the run length is fixed. It changes their
+  <strong>x/y offset and advance</strong>. WenKai's GPOS is all about <strong>vertical CJK metrics</strong>;
+  here is a real position diff from HarfBuzz (horizontal vs. vertical setting of the same character):</p>
+
+  <table class="mono">
+    <tr><th>feature</th><th>glyph</th><th>horizontal</th><th>vertical</th><th>what happened</th></tr>
+    <tr><td>vert / vhal</td><td>。</td><td>x-advance <code>1000</code>, no offset</td><td>y-advance <code>1000</code> (downward), y-offset <code>−880</code></td><td>the small stop is lifted to the <strong>top-right corner</strong> of its em cell and the pen now moves <em>down</em> the column, not right</td></tr>
+  </table>
+
+  <p>And the GPOS classics the wider world relies on (again, not in WenKai, but the same table):</p>
+  <ul>
+    <li><strong><code>kern</code> — <code>AV</code></strong>: leave both glyphs as-is but shift the
+      <code>V</code> left by ~80 units so the shapes tuck together. Pure positioning, zero substitution.</li>
+    <li><strong><code>mark</code> (mark-to-base)</strong> — place a combining accent over its base by an
+      <em>anchor point</em> (centered on the letter), not by advance width, so <code>e</code>+<code>◌̈</code>
+      lands the dieresis dead-center regardless of the <code>e</code>'s width.</li>
+    <li><strong><code>mkmk</code> (mark-to-mark)</strong> — stack a second accent above the first (e.g.
+      Vietnamese), spacing each off the previous mark.</li>
+    <li><strong><code>curs</code> (cursive attachment)</strong> — weld the <em>exit</em> anchor of one glyph
+      to the <em>entry</em> anchor of the next, so an Arabic joining stroke flows unbroken.</li>
+  </ul>
+
+  <div class="callout key">
+    <span class="label">The one-line test: did the count change?</span>
+    If a run got <em>longer or shorter</em>, that was <strong>GSUB</strong> (ligature, decompose,
+    fraction). If the run is the <em>same glyphs</em> but sitting in different places, that was
+    <strong>GPOS</strong> (kern, mark attach, vertical metrics). GSUB decides <em>which</em> glyphs; GPOS
+    decides <em>where</em> — always in that order.
+  </div>
+
+  <div class="callout proof">
+    <span class="label">Reproduce it</span>
+    These rows are real <code>hb.shape()</code> output. With HarfBuzz installed
+    (<code>uv pip install uharfbuzz</code>), shape a string and diff the glyph names against
+    <code>font.getBestCmap()</code>; or run the CLI <code>hb-shape --features=frac
+    LXGWWenKaiMonoGB-Regular.ttf "1/2"</code> and watch <code>[one, slash, two]</code> become
+    <code>onehalf.full</code>. Add <code>--direction=ttb</code> to see the <code>vert</code> swaps fire.
+  </div>
+
   <!-- ───────────────────────── EXERCISES ───────────────────────── -->
   <span class="section-tag ex">exercises</span>
   <h2>Exercises</h2>

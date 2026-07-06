@@ -21,9 +21,20 @@
   <span class="section-tag concept">concept</span>
   <h2>Shipping fonts: collections, variable, web, and rasterization</h2>
 
-  <p>A single <code>.ttf</code>/<code>.otf</code> holds <strong>one</strong> face. Real-world
-  delivery almost always needs more than one face, or a smaller file, or both. There are four
-  largely orthogonal answers, and each is just a different arrangement of the same sfnt tables.</p>
+  <p>A single <code>.ttf</code>/<code>.otf</code> holds <strong>one</strong> face. The hybrid this
+  course builds needs eighteen, so it ships as a <code>.ttc</code> — a font <em>collection</em> — and
+  that is the spine of this module; the walkthrough below takes it apart. But a collection is only one
+  way to deliver a font, so we take the delivery questions in order:</p>
+  <ul>
+    <li><strong>Many faces in one file</strong> — <em>collections</em> (what we used) versus
+      <em>variable fonts</em> (the alternative our two-unrelated-fonts situation ruled out).</li>
+    <li><strong>The same font, smaller</strong> — web compression (WOFF2) and subsetting, which matter
+      enormously for a CJK font this size.</li>
+    <li><strong>Outline into pixels</strong> — rasterization, closing the loop from Module 3.</li>
+  </ul>
+  <p>Each answer is just a different arrangement of the same sfnt tables from Module 1; nothing new is
+  invented at the bottom. (One thing sits off this spine — a glyph carrying <em>color</em> rather than a
+  bare outline — so it gets a short aside at the end rather than a numbered step.)</p>
 
   <h3>1 · Font collections (<code>.ttc</code> / <code>.otc</code>)</h3>
   <p>Recall the magic numbers from Module 1: a collection file starts with
@@ -44,11 +55,38 @@
   </div>
 
   <h3>2 · Variable fonts</h3>
-  <p>A collection ships a <em>few fixed</em> faces. A <strong>variable font</strong> is the
-  orthogonal answer: ship <em>one</em> set of master outlines plus <em>deltas</em> along
-  <strong>axes</strong>, and let the renderer interpolate any face on demand. Common axis tags:
-  <code>wght</code> (weight), <code>wdth</code> (width), <code>opsz</code> (optical size),
-  <code>slnt</code> (slant), <code>ital</code> (italic).</p>
+  <p>A collection packs a few <em>fixed, finished</em> faces. A <strong>variable font</strong> is the
+  <em>other</em> answer to the same goal — one file, many styles — reached by a completely different
+  mechanism: instead of storing each weight as its own complete outline, it stores <strong>one</strong>
+  master set of outlines and, for every glyph, a set of <strong>deltas</strong> — recorded instructions
+  for how each point should move as the design changes. The renderer adds some fraction of those deltas
+  to the master and gets any in-between face, <em>interpolated on demand</em>. So the two are
+  <strong>alternatives</strong>, not unrelated ideas: a collection provides many styles by
+  <em>packing</em> fixed faces; a variable font by <em>interpolating</em> one.</p>
+
+  <p>Move the points <em>along</em> what? An <strong>axis</strong> — a named, continuous design
+  dimension, like weight running thin→black, or width running condensed→expanded. Each axis is
+  identified by a registered <strong>four-letter tag</strong> (the same 4-byte tag idea used all
+  through sfnt), and a font <em>declares</em> which axes it offers, and their ranges, in its
+  <code>fvar</code> table (first row below). The registered axes you'll meet most:</p>
+  <ul>
+    <li><code>wght</code> — <strong>weight</strong> (e.g. 100 Thin … 400 Regular … 900 Black)</li>
+    <li><code>wdth</code> — <strong>width</strong> (condensed … expanded)</li>
+    <li><code>opsz</code> — <strong>optical size</strong> (detail tuned for small vs. large text)</li>
+    <li><code>slnt</code> — <strong>slant</strong> (oblique angle, in degrees)</li>
+    <li><code>ital</code> — <strong>italic</strong> (0 = upright, 1 = italic)</li>
+  </ul>
+
+  <div class="callout key">
+    <span class="label">Axis tags are not the feature tags from Module 6</span>
+    Both are four-letter tags, which makes them easy to confuse. A <strong>feature</strong> tag
+    (<code>liga</code>, <code>frac</code> — Module 6) is a <em>switch</em>: it lives in GSUB/GPOS and
+    either fires or it doesn't. An <strong>axis</strong> tag (<code>wght</code>, <code>wdth</code>) is a
+    <em>dial</em>: you set it to a <em>number</em> anywhere in its range and the outline interpolates to
+    match. Features turn behaviours on and off; axes slide a shape along a continuum.
+  </div>
+
+  <p>Four tables make this work — <code>fvar</code> is where the axis tags above are actually declared:</p>
   <table>
     <tr><th class="mono">table</th><th>role</th></tr>
     <tr><td class="mono">fvar</td><td>declares the axes and their ranges, plus <em>named instances</em> ("Bold", "Condensed")</td></tr>
@@ -64,18 +102,20 @@
     <tr><td>variable font</td><td>one master set + deltas, interpolated at runtime</td><td>infinite (a continuous space)</td></tr>
   </table>
 
-  <h3>3 · Color fonts (briefly)</h3>
-  <p>Plain outlines are monochrome. Several competing tables add color, and which one a platform
-  honors varies:</p>
-  <ul>
-    <li><code>COLR</code>/<code>CPAL</code> — layered vector glyphs with a color palette
-      (e.g. emoji on Windows). Scales cleanly.</li>
-    <li><code>sbix</code> — Apple's embedded color <em>bitmaps</em>.</li>
-    <li><code>CBDT</code>/<code>CBLC</code> — Google's embedded color bitmaps.</li>
-    <li><code>SVG</code> — a table holding actual SVG documents per glyph.</li>
-  </ul>
+  <div class="callout key">
+    <span class="label">Why our hybrid had to be a collection, not a variable font</span>
+    This is the fork that put us on the <code>.ttc</code> branch. Interpolation only works between
+    <strong>point-compatible masters</strong> — every glyph must have the same contours and the same
+    points in the same order, so the renderer can slide point <em>k</em> from its light position to its
+    bold one. That holds only when the styles are extremes of <em>one</em> design. WenKai and ZhenKai are
+    <strong>two independent typefaces</strong> — different skeletons, different point counts and orders —
+    so there is nothing to interpolate <em>between</em>; you can't morph one into the other. Unrelated
+    designs can only be packed side by side, which is exactly what a collection does and a variable font
+    cannot. A variable font would be the answer for <em>one</em> family's weight range; for <em>two</em>
+    separate designs, the collection isn't merely convenient — it's the only option.
+  </div>
 
-  <h3>4 · Web fonts: WOFF and WOFF2</h3>
+  <h3>3 · Web fonts: WOFF and WOFF2</h3>
   <p>This is the most common misconception, so state it plainly: <strong>WOFF and WOFF2 are not
   new font formats.</strong> They are <em>compressed wrappers</em> around the very same sfnt
   tables you already know. WOFF1 uses zlib/Deflate; <strong>WOFF2 uses Brotli</strong> and is
@@ -84,11 +124,15 @@
   or metrics changes.</p>
   <p><strong>Subsetting</strong> is the other half of web delivery. Tools like
   <code>pyftsubset</code> drop the glyphs (and whole tables) a page doesn't use, then re-emit the
-  font. For Latin this is a nicety; for <strong>CJK fonts it is vital</strong> — with tens of
-  thousands of glyphs (this font has <code>numGlyphs = 46830</code> from Module 4), the outlines
-  dominate the file, and an unsubsetted CJK web font is a multi-megabyte download.</p>
+  font. For Latin this is a nicety; for <strong>CJK fonts it is vital</strong> — and our own font is the
+  poster child. WenKai alone is ~25&nbsp;MB, almost all of it the <code>glyf</code> outlines for
+  <code>numGlyphs = 46830</code> (Module 4). Put that on a web page unsubsetted and every visitor
+  downloads ~25&nbsp;MB to show the few hundred characters actually on screen. Subsetting to just those
+  characters, <em>then</em> WOFF2-compressing, turns that into a page-sized download — which is why CJK
+  web fonts in practice are sliced by <code>unicode-range</code> and served in many small pieces
+  ("dynamic subsetting").</p>
 
-  <h3>5 · Rasterization — closing the loop</h3>
+  <h3>4 · Rasterization — closing the loop</h3>
   <p>Module 3 left you with a resolution-independent outline: contours of on/off-curve points in
   font units. A <strong>rasterizer</strong> — FreeType (Linux/Android), Core Graphics (Apple),
   DirectWrite (Windows) — scan-converts that outline into pixels at a target size. Along the way:
@@ -97,15 +141,27 @@
   the R-G-B stripes) softens the staircase. That is the final step that turns the
   <code>glyf</code> table into the glyphs on this screen.</p>
 
+  <div class="callout">
+    <span class="label">Aside · when a glyph carries color</span>
+    Everything above assumes a glyph is a monochrome outline. That's a separate axis from
+    <em>delivery</em>, which is why it sits off this module's spine — but for completeness: a font can
+    also store <strong>color</strong> per glyph, through one of several competing tables the platforms
+    only partly agree on. <code>COLR</code>/<code>CPAL</code> layers vector shapes over a palette (scales
+    cleanly — Windows emoji); <code>sbix</code> (Apple) and <code>CBDT</code>/<code>CBLC</code> (Google)
+    embed color <em>bitmaps</em>; <code>SVG</code> stores a full SVG document per glyph. Our WenKai/ZhenKai
+    hybrid uses none of these — it's monochrome outlines throughout — so this is background, not part of
+    the build.
+  </div>
+
   <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
   <span class="section-tag walk">walkthrough</span>
   <h2>Dissecting <code>LXGWHybrid.ttc</code></h2>
 
-  <p>The collection <code>build.py</code> produces is the perfect specimen, because it is the whole
-  course made physical. Its header begins with the collection magic <code>"ttcf"</code>, and it
-  carries <strong>18 faces across 9 families</strong> in <strong>~42 MB</strong> — almost exactly
-  the size of the <em>two</em> source fonts (~25 MB WenKai + ~17 MB ZhenKai), <em>not</em> nine
-  times a single font.</p>
+  <p>The collection we've been building — the two source fonts retagged into nine families (Module 5)
+  and packed into one file — is the perfect specimen, because it is the whole course made physical.
+  Its header begins with the collection magic <code>"ttcf"</code>, and it carries <strong>18 faces
+  across 9 families</strong> in <strong>~42 MB</strong> — almost exactly the size of the <em>two</em>
+  source fonts (~25 MB WenKai + ~17 MB ZhenKai), <em>not</em> nine times a single font.</p>
 
   <p>Why? Because the 18 faces only ever reference <strong>two</strong> sets of outlines. The nine
   Regular faces all reuse WenKai's <code>glyf</code>; the nine Bold faces all reuse ZhenKai's. The
@@ -135,22 +191,19 @@
   <p>Face 2 belongs to a <em>different family name</em> than face 0, yet its outlines live at the
   <strong>same offset 368</strong> — literally the same WenKai bytes. Nine family names, two sets
   of outlines, one file.</p>
+  <p class="legend">The figures here (18 faces, the exact offsets <code>368</code> /
+  <code>25848192</code>, the nine family names) are from a reference build; if you assemble the
+  collection yourself the specific byte offsets will differ, but the invariant won't — you'll still
+  find only <strong>two</strong> distinct <code>glyf</code> offsets, one per source font.</p>
 
   <div class="callout key">
     <span class="label">The whole course in one sentence</span>
-    <code>build.py</code> constructs 18 in-memory faces by retagging only metadata
+    Our build constructs 18 in-memory faces by retagging only metadata
     (<strong>Module 5</strong>: <code>name</code>/<code>OS/2</code>/<code>head</code>/<code>post</code>),
     leaving <code>glyf</code>/<code>cmap</code>/<code>hmtx</code> byte-identical
     (<strong>Module 1</strong> table independence; <strong>Modules 3–4</strong> outlines and metrics
     untouched). Then <code>TTCollection.save(shareTables=True)</code> collapses those identical heavy
     tables (<strong>Module 7</strong>) so 9 families cost ~2 fonts of disk.
-  </div>
-
-  <div class="callout proof">
-    <span class="label">See it for yourself</span>
-    <code>xxd -l 16 LXGWHybrid.ttc</code> shows the <code>ttcf</code> magic and face count;
-    <code>specimens/extract.py LXGWHybrid.ttc</code> prints every face's family name and
-    <code>glyf</code> offset so you can count the two distinct values yourself.
   </div>
 
   <!-- ───────────────────────── EXERCISES ───────────────────────── -->
@@ -192,19 +245,35 @@
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">7.3</span><span class="x-kind code">programming</span></div>
-    <p><strong>Count the distinct outlines.</strong> Using <code>python</code> and
-    fontTools, write the script yourself: open <code>LXGWHybrid.ttc</code>, loop over every face and
-    print its <code>glyf</code> offset alongside the face index, then print the <em>set</em> of
-    distinct offsets to confirm only two values appear.</p>
-    <p>How many distinct offsets are there? Which face indices share each? Do they match the
-    Regular/Bold split from the walkthrough?</p>
+    <p><strong>Prove <code>shareTables</code> yourself.</strong> You don't need the 18-face hybrid — the
+    dedup mechanism shows up in a <em>minimal</em> collection built from the shipped fonts, and building
+    it needs no retag (that's Module 5's metadata concern; this is purely about outline bytes). With
+    fontTools, run two experiments:</p>
+    <ol>
+      <li>Pack <strong>two different</strong> fonts — WenKai and ZhenKai — into a
+        <code>TTCollection</code>, <code>save(shareTables=True)</code>, reopen, and print each face's
+        <code>glyf</code> offset.</li>
+      <li>Pack the <strong>same</strong> font <em>twice</em> and do the same.</li>
+    </ol>
+    <p>How many distinct <code>glyf</code> offsets in each case? And how does the same-font-twice
+    <code>.ttc</code> compare in size to a single source font?</p>
     <details><summary>Stuck? a nudge (no full solution)</summary>
-      Open the file with <code>TTCollection</code>, iterate <code>coll.fonts</code>, and read each
-      face's offset straight from its directory record via
-      <code>sub.reader.tables['glyf'].offset</code> — that gives you the value without decompiling
-      the outlines. Collect the offsets into a <code>set</code> to see how many are distinct.
+      <code>c = TTCollection(); c.fonts = [TTFont(a), TTFont(b)]; c.save(path, shareTables=True)</code>.
+      Reopen with <code>TTCollection(path)</code>, iterate <code>coll.fonts</code>, and read each face's
+      offset straight from its directory record via <code>sub.reader.tables['glyf'].offset</code> — no
+      need to decompile the outlines.
     </details>
-    <p class="check-note">Paste your output and the <code>set</code> of distinct offsets — I'll confirm it's two.</p>
+    <details><summary>✓ Check your answer</summary>
+      <strong>Two different fonts → two distinct offsets</strong> (e.g. <code>[304, 25847976]</code>) —
+      nothing to share. <strong>Same font twice → one shared offset</strong> (e.g. <code>[304, 304]</code>),
+      and the <code>.ttc</code> is ~1× a single font, not 2× — the identical <code>glyf</code> is stored
+      once and both directories point at it. Scale that from 2 faces to 18 and you have the hybrid: 9
+      Regular faces sharing WenKai's outlines, 9 Bold sharing ZhenKai's, two distinct offsets total.
+      (Your exact offset numbers will differ from the walkthrough's <code>368</code> — the header size
+      differs — but the <em>count</em> of distinct offsets is the invariant.)
+    </details>
+    <p class="check-note">Paste your two offset lists — I'll confirm the same-font case shares and the
+    two-font case doesn't.</p>
   </div>
 
   <div class="exercise">
@@ -240,14 +309,13 @@
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">7.6</span><span class="x-kind concept">capstone</span></div>
-    <p><strong>Capstone — read <code>build.py</code> with full understanding.</strong> Re-read
-    <code>lxgw-wenkai-zhenkai/build.py</code> end to end. In your own words: (a) list <em>every</em>
-    table it modifies and why; (b) name the one table-class it never touches and why that matters;
-    (c) trace start to finish how "ask for bold in family X → get real ZhenKai strokes" actually
-    works, citing Modules 1, 4, 5, and 7.</p>
+    <p><strong>Capstone — explain the whole hybrid in your own words.</strong> No code to read: just
+    synthesise what you've learned across Modules 1–7 into the story of how two unrelated fonts become
+    one hybrid family. (a) List <em>every</em> table the retag changes and why; (b) name the one
+    table-class it leaves untouched and why that matters; (c) trace start to finish how "ask for bold in
+    family X → get real ZhenKai strokes" actually works, citing Modules 1, 4, 5, and 7.</p>
     <details><summary>Show model solution</summary>
-      <p><strong>(a) Tables it modifies</strong> (all inside <code>build_face</code>, via
-      <code>set_name</code> and direct field writes):</p>
+      <p><strong>(a) Tables the retag changes</strong> — four small metadata tables, nothing else:</p>
       <ul>
         <li><code>name</code> — rewrites ids 1 (Family), 2 (Subfamily = "Regular"/"Bold"),
           3 (Unique ID), 4 (Full name), 6 (PostScript name), and <em>removes</em> ids 16/17
@@ -269,18 +337,17 @@
       <code>glyf</code>/<code>loca</code> (outlines, Module 3), <code>cmap</code> (Module 2), and
       <code>hmtx</code> (advances, Module 4). It deliberately moves and redraws <em>nothing</em>.
       That matters for two reasons: (1) the CJK advance is already a full em in both fonts
-      (<code>一</code> = 1000/1000 em; <code>build.py</code> prints this equality as proof no
-      re-metricizing is needed, so bold columns stay aligned — Module 4); and (2) leaving those
+      (<code>一</code> = 1000/1000 em, the equality we proved in Module 4 — so no re-metricizing is
+      needed and bold columns stay aligned); and (2) leaving those
       tables byte-identical across every face built from the same source is precisely what lets
       <code>TTCollection.save(shareTables=True)</code> store them <em>once</em> (Module 7). Touching
       <code>glyf</code> would also break the on-disk 4-byte alignment and defeat sharing.</p>
       <p><strong>(c) "Ask for bold in family X → real ZhenKai strokes," start to finish:</strong></p>
       <ol>
-        <li>For each family name, <code>build_face(wen, …, weight=400, bold=False)</code> labels a
-          copy of WenKai as that family's Regular, and <code>build_face(zhen, …, weight=700,
-          bold=True)</code> labels a copy of ZhenKai as that family's Bold — same family name in
-          <code>name</code> id 1, different subfamily/weight in <code>name</code> id 2 +
-          <code>OS/2.usWeightClass</code> + <code>fsSelection</code>/<code>macStyle</code> (Module 5).</li>
+        <li>For each of the nine family names, a copy of WenKai is labelled that family's Regular
+          (weight 400) and a copy of ZhenKai its Bold (weight 700) — same family name in <code>name</code>
+          id 1, different subfamily/weight in <code>name</code> id 2 + <code>OS/2.usWeightClass</code> +
+          <code>fsSelection</code>/<code>macStyle</code> (the Module 5 retag).</li>
         <li>All 18 faces are packed into one <code>.ttc</code> with <code>shareTables=True</code>;
           because the outline tables were never edited, the 9 Regular faces share WenKai's
           <code>glyf</code> at one offset and the 9 Bold faces share ZhenKai's at another — the two
@@ -308,11 +375,14 @@
   <div class="callout">
     <span class="label">You finished the course</span>
     Congratulations — you can now open any font and read its header, directory, <code>cmap</code>,
-    outlines, metrics, identity, shaping tables, and packaging, and you understand exactly how
-    <code>build.py</code> turns two unrelated fonts into one hybrid family. To reproduce every
-    number in this tutorial yourself, run <code>specimens/extract.py</code> against the three
-    specimen files; to rebuild the hybrid <code>.ttc</code>, run
-    <code>lxgw-wenkai-zhenkai/build.py</code>. The bytes are the source of truth — go check them.
+    outlines, metrics, identity, shaping tables, and packaging, and you understand exactly how a
+    retag-and-pack turns two unrelated fonts into one hybrid family. To reproduce every number in this
+    tutorial yourself, run <code>specimens/extract.py</code> against the two specimen fonts; to build
+    the hybrid <code>.ttc</code>, apply the Module 5 retag to each source and pack them with
+    <code>TTCollection.save(shareTables=True)</code>. The real assembly script this hybrid comes from
+    lives at <a href="https://github.com/Frefreak/lxgw-wenkai-zhenkai">Frefreak/lxgw-wenkai-zhenkai</a>
+    (<code>build.py</code>), if you want the exact code behind the procedure. The bytes are the source
+    of truth — go check them.
   </div>
 </main>
 <script src="../assets/app.js"></script>
