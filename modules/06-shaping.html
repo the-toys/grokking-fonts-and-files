@@ -17,6 +17,8 @@
   re-positions the glyph run before anything is drawn — turning <code>f+i</code> into a single
   <code>fi</code>, nudging <code>AV</code> closer together, or swapping a glyph for its sideways
   form so CJK text can flow top-to-bottom.</p>
+  <p class="legend">Exercises are <strong>interleaved</strong> — each sits under the concept it tests.
+  Concept ones have a solution; programming ones have a collapsible check.</p>
 
   <!-- ───────────────────────── CONCEPT ───────────────────────── -->
   <span class="section-tag concept">concept</span>
@@ -53,6 +55,20 @@ pixels</code></pre>
       only their x/y offsets and advances shift.</li>
   </ul>
 
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.1</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Order the pipeline.</strong> Put these four stages in the order they run, and say in one
+    phrase what each does: <code>GPOS</code>, <code>cmap</code>, <code>GSUB</code>, outline fill.</p>
+    <details><summary>Show solution</summary>
+      <strong>1. <code>cmap</code></strong> — turn each Unicode codepoint into a base glyph ID.
+      <strong>2. <code>GSUB</code></strong> — substitute glyph IDs (ligatures, alternates, vertical
+      forms): the run can change length. <strong>3. <code>GPOS</code></strong> — move the glyphs
+      (kern, attach marks, adjust metrics) without changing which glyphs they are.
+      <strong>4. outline fill</strong> — draw each final glyph's outline at its placed position /
+      advance. GSUB before GPOS: you decide <em>which</em> glyphs first, then <em>where</em> they go.
+    </details>
+  </div>
+
   <p>Both tables share the same internal hierarchy:</p>
 
 <pre><code>Script  (e.g. latn, hani)
@@ -81,6 +97,23 @@ pixels</code></pre>
   output — one glyph per codepoint, left to right — is genuinely unreadable. Shaping is what makes the
   text correct, not merely prettier.</p>
 
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.2</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Why some scripts can't skip shaping.</strong> Plain English text mostly survives on raw
+    <code>cmap</code> output, but Arabic and Indic scripts genuinely <em>require</em> a shaping engine.
+    Why?</p>
+    <details><summary>Show solution</summary>
+      In Latin, codepoints already sit in visual order and each letter has essentially one form, so
+      one-glyph-per-codepoint is readable (you only lose ligatures/kerning — cosmetic). Arabic letters
+      <em>join</em> and change shape by position (initial / medial / final / isolated), so the engine
+      must pick the right contextual form and connect them. Many Indic scripts <em>reorder</em> — a
+      vowel typed after a consonant may render before it — and combine consonants into conjunct
+      glyphs. Those are mandatory substitutions and reorderings the shaping engine performs via
+      GSUB/GPOS; without it the raw cmap run is in the wrong order and the wrong shapes — unreadable,
+      not just unpolished.
+    </details>
+  </div>
+
   <div class="callout key">
     <span class="label">Two "maps" that are easy to confuse</span>
     <code>cmap</code> is <strong>codepoint → glyph</strong>: one lookup, no context, the entry point.
@@ -89,6 +122,39 @@ pixels</code></pre>
     substitution</em> (swap these glyph IDs for that one), which is a different thing entirely from
     the <em>composite glyphs</em> of Module 3 (one outline reusing another outline as a component).
     Same word, different layer.
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.3</span><span class="x-kind concept">concept</span></div>
+    <p><strong>cmap vs GSUB.</strong> What is the difference between a <code>cmap</code> mapping and a
+    <code>GSUB</code> substitution? Give one concrete example of each.</p>
+    <details><summary>Show solution</summary>
+      <code>cmap</code> is a single, context-free table that maps <em>one codepoint to one base
+      glyph</em> — e.g. U+4E00 '一' → glyph <code>u4E00</code>. <code>GSUB</code> takes the resulting
+      glyph run and rewrites it <em>in context</em>, possibly changing the count — e.g. the glyphs for
+      <code>f</code>+<code>i</code> → a single <code>fi</code> ligature, or a digit run under
+      <code>frac</code> collapsing to <code>½</code>. cmap answers "what glyph does this character
+      start as?"; GSUB answers "given the surrounding glyphs and the requested features, what should
+      this become?".
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.4</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Two kinds of "composite".</strong> GSUB <code>ccmp</code> is called <em>glyph
+    composition / decomposition</em>, and Module 3 had <em>composite glyphs</em>. Both "combine"
+    things. What is actually different?</p>
+    <details><summary>Show solution</summary>
+      Different layers. <strong>GSUB <code>ccmp</code></strong> is a <em>shaping substitution</em>: it
+      rewrites the <em>glyph-ID run</em> — e.g. splitting a precomposed character into base + mark
+      glyphs (or recombining them) so later mark-positioning lookups can attach them cleanly. It
+      operates on the sequence of glyphs, before drawing. <strong>Module 3's composite glyphs</strong>
+      are an <em>outline-reuse</em> mechanism inside <code>glyf</code>: one glyph's outline is defined
+      by referencing another glyph as a component placed at an offset (e.g. <code>dieresis</code>
+      reusing <code>dieresiscomb</code> at x=500). That's about how a <em>single</em> glyph's shape is
+      stored, not about rewriting the run. ccmp changes <em>which glyphs</em>; glyf composites change
+      <em>how one glyph is drawn</em>.
+    </details>
   </div>
 
   <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
@@ -165,7 +231,27 @@ pixels</code></pre>
   <div class="callout proof">
     <span class="label">See it for yourself</span>
     <code>python specimens/extract.py LXGWWenKaiMonoGB-Regular.ttf</code> prints these
-    script / feature / lookup figures. Exercise 6.4 below walks the same tables by hand with fontTools.
+    script / feature / lookup figures. The exercise below walks the same tables by hand with fontTools.
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.5</span><span class="x-kind code">programming</span></div>
+    <p><strong>Walk the layout tables with fontTools.</strong> Using
+    <code>python</code>, open WenKai and print, for both <code>GSUB</code> and
+    <code>GPOS</code>: the script tags, the feature tags, and the number of lookups. Your output should
+    reproduce the walkthrough table (6 scripts each; GSUB 12 lookups / 8 features; GPOS 3 lookups /
+    3 features).</p>
+    <p>For each of <code>GSUB</code> and <code>GPOS</code>, reach the table object, collect the script
+    tags and feature tags, and count the lookups, then print all three so the result lines up with the
+    walkthrough figures above.</p>
+    <details><summary>Stuck? a nudge (no full solution)</summary>
+      The hierarchy is reachable as <code>f['GSUB'].table.ScriptList</code> /
+      <code>.FeatureList</code> / <code>.LookupList</code>. Each <code>ScriptRecord</code> has a
+      <code>.ScriptTag</code>; each <code>FeatureRecord</code> a <code>.FeatureTag</code>; lookups are
+      counted by <code>LookupList.LookupCount</code> (or <code>len(LookupList.Lookup)</code>).
+    </details>
+    <p class="check-note">Paste your code and its output — I'll confirm the tags and counts match the
+    specimen.</p>
   </div>
 
   <!-- ───────────────────────── GALLERY: GSUB ───────────────────────── -->
@@ -257,28 +343,8 @@ pixels</code></pre>
     <code>onehalf.full</code>. Add <code>--direction=ttb</code> to see the <code>vert</code> swaps fire.
   </div>
 
-  <!-- ───────────────────────── EXERCISES ───────────────────────── -->
-  <span class="section-tag ex">exercises</span>
-  <h2>Exercises</h2>
-  <p class="legend">Attempt each, then paste your answer/output to your tutor to check.
-  Hints &amp; self-check solutions are collapsible.</p>
-
   <div class="exercise">
-    <div class="x-head"><span class="x-id">6.1</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Order the pipeline.</strong> Put these four stages in the order they run, and say in one
-    phrase what each does: <code>GPOS</code>, <code>cmap</code>, <code>GSUB</code>, outline fill.</p>
-    <details><summary>Show solution</summary>
-      <strong>1. <code>cmap</code></strong> — turn each Unicode codepoint into a base glyph ID.
-      <strong>2. <code>GSUB</code></strong> — substitute glyph IDs (ligatures, alternates, vertical
-      forms): the run can change length. <strong>3. <code>GPOS</code></strong> — move the glyphs
-      (kern, attach marks, adjust metrics) without changing which glyphs they are.
-      <strong>4. outline fill</strong> — draw each final glyph's outline at its placed position /
-      advance. GSUB before GPOS: you decide <em>which</em> glyphs first, then <em>where</em> they go.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">6.2</span><span class="x-kind concept">concept</span></div>
+    <div class="x-head"><span class="x-id">6.6</span><span class="x-kind concept">concept</span></div>
     <p><strong>GSUB or GPOS?</strong> For each tag — <code>calt</code>, <code>frac</code>,
     <code>vert</code> — say which table it belongs to and what visible effect it produces.</p>
     <details><summary>Show solution</summary>
@@ -289,82 +355,6 @@ pixels</code></pre>
       <code>vert</code> adjusts that glyph's position/metrics for vertical setting. The two
       <code>calt</code>/<code>frac</code> change <em>which</em> glyph; <code>vert</code> changes the
       glyph <em>and</em> nudges its placement.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">6.3</span><span class="x-kind concept">concept</span></div>
-    <p><strong>cmap vs GSUB.</strong> What is the difference between a <code>cmap</code> mapping and a
-    <code>GSUB</code> substitution? Give one concrete example of each.</p>
-    <details><summary>Show solution</summary>
-      <code>cmap</code> is a single, context-free table that maps <em>one codepoint to one base
-      glyph</em> — e.g. U+4E00 '一' → glyph <code>u4E00</code>. <code>GSUB</code> takes the resulting
-      glyph run and rewrites it <em>in context</em>, possibly changing the count — e.g. the glyphs for
-      <code>f</code>+<code>i</code> → a single <code>fi</code> ligature, or a digit run under
-      <code>frac</code> collapsing to <code>½</code>. cmap answers "what glyph does this character
-      start as?"; GSUB answers "given the surrounding glyphs and the requested features, what should
-      this become?".
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">6.4</span><span class="x-kind code">programming</span></div>
-    <p><strong>Walk the layout tables with fontTools.</strong> Using
-    <code>python</code>, open WenKai and print, for both <code>GSUB</code> and
-    <code>GPOS</code>: the script tags, the feature tags, and the number of lookups. Your output should
-    reproduce the walkthrough table (6 scripts each; GSUB 12 lookups / 8 features; GPOS 3 lookups /
-    3 features).</p>
-    <p>For each of <code>GSUB</code> and <code>GPOS</code>, reach the table object, collect the script
-    tags and feature tags, and count the lookups, then print all three so the result lines up with the
-    walkthrough figures above.</p>
-    <details><summary>Stuck? a nudge (no full solution)</summary>
-      The hierarchy is reachable as <code>f['GSUB'].table.ScriptList</code> /
-      <code>.FeatureList</code> / <code>.LookupList</code>. Each <code>ScriptRecord</code> has a
-      <code>.ScriptTag</code>; each <code>FeatureRecord</code> a <code>.FeatureTag</code>; lookups are
-      counted by <code>LookupList.LookupCount</code> (or <code>len(LookupList.Lookup)</code>).
-    </details>
-    <details><summary>Hint</summary>
-      The hierarchy is reachable as <code>f['GSUB'].table.ScriptList</code> /
-      <code>.FeatureList</code> / <code>.LookupList</code>. Each <code>ScriptRecord</code> has a
-      <code>.ScriptTag</code>; each <code>FeatureRecord</code> a <code>.FeatureTag</code>; lookups are
-      counted by <code>LookupList.LookupCount</code> (or <code>len(LookupList.Lookup)</code>).
-    </details>
-    <p class="check-note">Paste your code and its output — I'll confirm the tags and counts match the
-    specimen.</p>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">6.5</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Why some scripts can't skip shaping.</strong> Plain English text mostly survives on raw
-    <code>cmap</code> output, but Arabic and Indic scripts genuinely <em>require</em> a shaping engine.
-    Why?</p>
-    <details><summary>Show solution</summary>
-      In Latin, codepoints already sit in visual order and each letter has essentially one form, so
-      one-glyph-per-codepoint is readable (you only lose ligatures/kerning — cosmetic). Arabic letters
-      <em>join</em> and change shape by position (initial / medial / final / isolated), so the engine
-      must pick the right contextual form and connect them. Many Indic scripts <em>reorder</em> — a
-      vowel typed after a consonant may render before it — and combine consonants into conjunct
-      glyphs. Those are mandatory substitutions and reorderings the shaping engine performs via
-      GSUB/GPOS; without it the raw cmap run is in the wrong order and the wrong shapes — unreadable,
-      not just unpolished.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">6.6</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Two kinds of "composite".</strong> GSUB <code>ccmp</code> is called <em>glyph
-    composition / decomposition</em>, and Module 3 had <em>composite glyphs</em>. Both "combine"
-    things. What is actually different?</p>
-    <details><summary>Show solution</summary>
-      Different layers. <strong>GSUB <code>ccmp</code></strong> is a <em>shaping substitution</em>: it
-      rewrites the <em>glyph-ID run</em> — e.g. splitting a precomposed character into base + mark
-      glyphs (or recombining them) so later mark-positioning lookups can attach them cleanly. It
-      operates on the sequence of glyphs, before drawing. <strong>Module 3's composite glyphs</strong>
-      are an <em>outline-reuse</em> mechanism inside <code>glyf</code>: one glyph's outline is defined
-      by referencing another glyph as a component placed at an offset (e.g. <code>dieresis</code>
-      reusing <code>dieresiscomb</code> at x=500). That's about how a <em>single</em> glyph's shape is
-      stored, not about rewriting the run. ccmp changes <em>which glyphs</em>; glyf composites change
-      <em>how one glyph is drawn</em>.
     </details>
   </div>
 

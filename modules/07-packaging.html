@@ -16,6 +16,8 @@
   the same faces in a smaller download (web fonts), and finally how the resolution-independent
   outline you studied in Module 3 turns into actual pixels. Everything here reuses the container
   model from Module 1 — nothing new is invented at the bottom.</p>
+  <p class="legend">Exercises are <strong>interleaved</strong> — each sits under the concept it tests.
+  Concept ones have a solution; programming ones have a collapsible check.</p>
 
   <!-- ───────────────────────── CONCEPT ───────────────────────── -->
   <span class="section-tag concept">concept</span>
@@ -52,6 +54,21 @@
     <code>head</code>) is duplicated. This is exactly what fontTools'
     <code>TTCollection.save(shareTables=True)</code> does, and it's why this whole course's
     hybrid font costs ~2 fonts of disk for 9 families.
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.1</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Where did the bytes go?</strong> The 18-face <code>.ttc</code> weighs ~42&nbsp;MB —
+    about the size of the <em>two</em> source fonts, not <em>9×</em> a source font. Explain what
+    makes that possible, and which tables are the exception that <em>does</em> get duplicated.</p>
+    <details><summary>Show solution</summary>
+      The 18 faces reference only <strong>two</strong> sets of physical tables: all 9 Regular faces
+      share WenKai's <code>glyf</code>/<code>cmap</code>/<code>hmtx</code> (one offset), and all 9
+      Bold faces share ZhenKai's. <code>shareTables=True</code> stores each heavy table once and
+      points many directories at it. The only per-face duplication is the small metadata that
+      <em>must</em> differ — <code>name</code>, <code>OS/2</code>, <code>head</code> — which is tiny
+      next to the 24.7&nbsp;MB of outlines.
+    </details>
   </div>
 
   <h3>2 · Variable fonts</h3>
@@ -115,6 +132,22 @@
     separate designs, the collection isn't merely convenient — it's the only option.
   </div>
 
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.2</span><span class="x-kind concept">concept</span></div>
+    <p><strong>TTC vs variable font.</strong> Both let one file provide many styles. State the core
+    mechanism of each in one line, and say when you'd reach for which.</p>
+    <details><summary>Show solution</summary>
+      <strong>TTC</strong>: several <em>complete, fixed</em> faces packed together, sharing identical
+      static tables by offset. Reach for it when you have a small set of already-designed faces (or,
+      as here, two unrelated fonts you want grouped) and want them to coexist cheaply.
+      <strong>Variable font</strong>: one master set of outlines plus per-glyph <em>deltas</em>
+      (<code>gvar</code>/CFF2) along axes declared in <code>fvar</code>; the renderer
+      <em>interpolates</em> any location. Reach for it when you want a continuous design space
+      (any weight 100–900, optical sizing) in the smallest file. TTC = a few static faces;
+      variable = infinitely many interpolated faces.
+    </details>
+  </div>
+
   <h3>3 · Web fonts: WOFF and WOFF2</h3>
   <p>This is the most common misconception, so state it plainly: <strong>WOFF and WOFF2 are not
   new font formats.</strong> They are <em>compressed wrappers</em> around the very same sfnt
@@ -131,6 +164,37 @@
   characters, <em>then</em> WOFF2-compressing, turns that into a page-sized download — which is why CJK
   web fonts in practice are sliced by <code>unicode-range</code> and served in many small pieces
   ("dynamic subsetting").</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.3</span><span class="x-kind concept">concept</span></div>
+    <p><strong>What <em>is</em> a WOFF2?</strong> A teammate says "we should re-export the font in
+    the WOFF2 outline format for the web." Is WOFF2 a different outline technology? If not, what is
+    it actually, and why does the web prefer it?</p>
+    <details><summary>Show solution</summary>
+      No — WOFF2 is not an outline technology at all. It's a <strong>Brotli-compressed wrapper</strong>
+      around the exact same sfnt tables (<code>glyf</code>/<code>loca</code> or CFF, <code>cmap</code>,
+      <code>hmtx</code>, …). The browser decompresses it back to the identical table model and renders
+      it like any TTF/OTF. The web prefers it purely for transfer size: Brotli plus font-specific
+      preprocessing makes it ~30% smaller than WOFF1 and much smaller than raw TTF, with no quality
+      loss. "Re-export in WOFF2" really means "compress the same font."
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.4</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Why subset CJK especially?</strong> Subsetting matters for any web font, but it is
+    almost mandatory for CJK ones. Using the glyph count you measured earlier
+    (<code>numGlyphs = 46830</code>), explain why.</p>
+    <details><summary>Show solution</summary>
+      A Latin face has a few hundred glyphs; this CJK face has <strong>46,830</strong>, and the
+      <code>glyf</code> table alone is ~24.7&nbsp;MB — the outlines dominate the file. A web page
+      typically displays a few hundred to a few thousand distinct characters, so shipping all 46k
+      glyphs wastes nearly the entire payload. <code>pyftsubset</code> keeps only the glyphs (and
+      tables) actually used, turning a multi-megabyte download into something page-sized. Even with
+      WOFF2's Brotli on top, the win comes mostly from <em>not sending</em> the unused glyphs.
+      (Hence "dynamic subsetting" / unicode-range slicing for CJK in practice.)
+    </details>
+  </div>
 
   <h3>4 · Rasterization — closing the loop</h3>
   <p>Module 3 left you with a resolution-independent outline: contours of on/off-curve points in
@@ -206,45 +270,8 @@
     tables (<strong>Module 7</strong>) so 9 families cost ~2 fonts of disk.
   </div>
 
-  <!-- ───────────────────────── EXERCISES ───────────────────────── -->
-  <span class="section-tag ex">exercises</span>
-  <h2>Exercises</h2>
-  <p class="legend">Attempt each, then paste your answer/output to your tutor to check.
-  Hints &amp; self-check solutions are collapsible.</p>
-
   <div class="exercise">
-    <div class="x-head"><span class="x-id">7.1</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Where did the bytes go?</strong> The 18-face <code>.ttc</code> weighs ~42&nbsp;MB —
-    about the size of the <em>two</em> source fonts, not <em>9×</em> a source font. Explain what
-    makes that possible, and which tables are the exception that <em>does</em> get duplicated.</p>
-    <details><summary>Show solution</summary>
-      The 18 faces reference only <strong>two</strong> sets of physical tables: all 9 Regular faces
-      share WenKai's <code>glyf</code>/<code>cmap</code>/<code>hmtx</code> (one offset), and all 9
-      Bold faces share ZhenKai's. <code>shareTables=True</code> stores each heavy table once and
-      points many directories at it. The only per-face duplication is the small metadata that
-      <em>must</em> differ — <code>name</code>, <code>OS/2</code>, <code>head</code> — which is tiny
-      next to the 24.7&nbsp;MB of outlines.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">7.2</span><span class="x-kind concept">concept</span></div>
-    <p><strong>TTC vs variable font.</strong> Both let one file provide many styles. State the core
-    mechanism of each in one line, and say when you'd reach for which.</p>
-    <details><summary>Show solution</summary>
-      <strong>TTC</strong>: several <em>complete, fixed</em> faces packed together, sharing identical
-      static tables by offset. Reach for it when you have a small set of already-designed faces (or,
-      as here, two unrelated fonts you want grouped) and want them to coexist cheaply.
-      <strong>Variable font</strong>: one master set of outlines plus per-glyph <em>deltas</em>
-      (<code>gvar</code>/CFF2) along axes declared in <code>fvar</code>; the renderer
-      <em>interpolates</em> any location. Reach for it when you want a continuous design space
-      (any weight 100–900, optical sizing) in the smallest file. TTC = a few static faces;
-      variable = infinitely many interpolated faces.
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">7.3</span><span class="x-kind code">programming</span></div>
+    <div class="x-head"><span class="x-id">7.5</span><span class="x-kind code">programming</span></div>
     <p><strong>Prove <code>shareTables</code> yourself.</strong> You don't need the 18-face hybrid — the
     dedup mechanism shows up in a <em>minimal</em> collection built from the shipped fonts, and building
     it needs no retag (that's Module 5's metadata concern; this is purely about outline bytes). With
@@ -274,37 +301,6 @@
     </details>
     <p class="check-note">Paste your two offset lists — I'll confirm the same-font case shares and the
     two-font case doesn't.</p>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">7.4</span><span class="x-kind concept">concept</span></div>
-    <p><strong>What <em>is</em> a WOFF2?</strong> A teammate says "we should re-export the font in
-    the WOFF2 outline format for the web." Is WOFF2 a different outline technology? If not, what is
-    it actually, and why does the web prefer it?</p>
-    <details><summary>Show solution</summary>
-      No — WOFF2 is not an outline technology at all. It's a <strong>Brotli-compressed wrapper</strong>
-      around the exact same sfnt tables (<code>glyf</code>/<code>loca</code> or CFF, <code>cmap</code>,
-      <code>hmtx</code>, …). The browser decompresses it back to the identical table model and renders
-      it like any TTF/OTF. The web prefers it purely for transfer size: Brotli plus font-specific
-      preprocessing makes it ~30% smaller than WOFF1 and much smaller than raw TTF, with no quality
-      loss. "Re-export in WOFF2" really means "compress the same font."
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">7.5</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Why subset CJK especially?</strong> Subsetting matters for any web font, but it is
-    almost mandatory for CJK ones. Using the glyph count you measured earlier
-    (<code>numGlyphs = 46830</code>), explain why.</p>
-    <details><summary>Show solution</summary>
-      A Latin face has a few hundred glyphs; this CJK face has <strong>46,830</strong>, and the
-      <code>glyf</code> table alone is ~24.7&nbsp;MB — the outlines dominate the file. A web page
-      typically displays a few hundred to a few thousand distinct characters, so shipping all 46k
-      glyphs wastes nearly the entire payload. <code>pyftsubset</code> keeps only the glyphs (and
-      tables) actually used, turning a multi-megabyte download into something page-sized. Even with
-      WOFF2's Brotli on top, the win comes mostly from <em>not sending</em> the unused glyphs.
-      (Hence "dynamic subsetting" / unicode-range slicing for CJK in practice.)
-    </details>
   </div>
 
   <div class="exercise">

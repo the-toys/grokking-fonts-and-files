@@ -15,6 +15,8 @@
   saying "here's what's inside and at what byte offset", followed by the data blobs (called
   <em>tables</em>) it points to. Learn this skeleton once and you can read fonts, and ZIP, ELF,
   PNG, TIFF — they all share it.</p>
+  <p class="legend">Exercises are <strong>interleaved</strong> — each sits under the concept it tests.
+  Concept ones have a solution; programming ones have a collapsible check.</p>
 
   <!-- ───────────────────────── CONCEPT ───────────────────────── -->
   <span class="section-tag concept">concept</span>
@@ -64,6 +66,18 @@
   is the integer <code>0x47504F53</code>. Tags are everywhere: PNG chunks, RIFF/WAV, Mac type codes.
   Note the quirk that one table is literally named <code>OS/2</code> (with the slash) — still 4 bytes.</p>
 
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">1.1</span><span class="x-kind concept">concept</span></div>
+    <p><strong>Identify the collection magic.</strong> Run
+    <code>xxd -l 16 LXGWHybrid.ttc</code>. What are the first 4 bytes as ASCII, and what does that
+    tell you the file is? How does it differ from a plain <code>.ttf</code>'s magic?</p>
+    <details><summary>Show solution</summary>
+      <code>74 74 63 66</code> = "ttcf" — a TrueType/OpenType <em>Collection</em>. Instead of one
+      sfnt, the file starts with a collection header listing byte offsets to several embedded sfnt
+      directories that <em>share</em> table data. We dissect this in Module 7.
+    </details>
+  </div>
+
   <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
   <span class="section-tag walk">walkthrough</span>
   <h2>Decoding the real header of WenKai</h2>
@@ -95,6 +109,20 @@ rangeShift    = 17×16 − 256          = 16    ✓</code></pre>
   <p>Modern parsers ignore these and just loop, but they're a tell that <strong>the directory is
   sorted by tag</strong> (otherwise binary search would be impossible). A malformed font can lie
   here; robust readers recompute.</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">1.2</span><span class="x-kind code">programming</span></div>
+    <p><strong>Predict, then verify, the search fields for ZhenKai.</strong> Run:</p>
+    <pre><code>xxd -l 12 LXGWZhenKaiGB-Regular.ttf</code></pre>
+    <p>Read <code>numTables</code> from the bytes, then <em>compute</em>
+    <code>searchRange / entrySelector / rangeShift</code> by hand and check them against the file.
+    Do they match the formula?</p>
+    <details><summary>Hint</summary>
+      Bytes 4–5 are numTables. Find the largest power of two ≤ that. searchRange = (that)×16,
+      entrySelector = its log₂, rangeShift = numTables×16 − searchRange.
+    </details>
+    <p class="check-note">Paste the 12 bytes and your computed values — I'll confirm.</p>
+  </div>
 
   <h3>The directory records (16 bytes each)</h3>
   <p>After the header come <code>numTables</code> records of <code>tag(4) checksum(4) offset(4)
@@ -139,48 +167,8 @@ rangeShift    = 17×16 − 256          = 16    ✓</code></pre>
   (uppercase ASCII sorts before lowercase, so <code>G</code>=0x47 precedes <code>c</code>=0x63).
   <strong>That gap between record order and body order is the whole lesson.</strong></p>
 
-  <h3>Integrity: checksums</h3>
-  <p>Each record carries a <code>checksum</code> — the table's bytes summed as big-endian
-  <code>uint32</code>s with 32-bit wraparound. The <code>head</code> table additionally stores
-  <code>checkSumAdjustment</code>, a fudge value chosen so the <em>whole file</em> checksums to the
-  constant <code>0xB1B0AFBA</code>. Same job as a CRC in PNG/ZIP: detect corruption, not tampering
-  (that's what the <code>DSIG</code> digital-signature table is for).</p>
-
-  <div class="callout">
-    <span class="label">Required vs optional tables</span>
-    A valid TrueType font must contain <code>cmap, head, hhea, hmtx, maxp, name, OS/2, post</code>
-    plus <code>glyf</code>+<code>loca</code> (for TrueType outlines). Everything else
-    (<code>GPOS, GSUB, gasp, prep, meta, vhea, vmtx…</code>) is optional. WenKai carries the vertical
-    ones because CJK text can be set top-to-bottom.
-  </div>
-
-  <h3>What's <em>inside</em> each table — and where you'll learn it</h3>
-  <p>This module is about the <strong>container</strong>: how tables are indexed and laid out, not what
-  lives inside them. Each table's contents get dissected in its own module — so when a later page says
-  "names live in <code>name</code>", that's a promise, not an assumption. The map:</p>
-  <table>
-    <tr><th>table(s)</th><th>holds</th><th>module</th></tr>
-    <tr><td class="mono">cmap</td><td>character code → glyph ID</td><td>2</td></tr>
-    <tr><td class="mono">glyf, loca</td><td>glyph outlines + their index</td><td>3</td></tr>
-    <tr><td class="mono">hmtx, hhea, vmtx, vhea</td><td>advance widths &amp; line metrics (horizontal + vertical)</td><td>4</td></tr>
-    <tr><td class="mono">head</td><td>units-per-em &amp; bbox (Mod 4); bold/italic <code>macStyle</code> flags (Mod 5)</td><td>4 · 5</td></tr>
-    <tr><td class="mono">name</td><td>human &amp; family name strings</td><td>5</td></tr>
-    <tr><td class="mono">OS/2</td><td>weight, style bits, PANOSE, width class</td><td>5</td></tr>
-    <tr><td class="mono">post</td><td>glyph names &amp; the <code>isFixedPitch</code> flag</td><td>5 (touched)</td></tr>
-    <tr><td class="mono">GSUB, GPOS</td><td>glyph substitution &amp; positioning</td><td>6</td></tr>
-    <tr><td class="mono">maxp</td><td>glyph count &amp; size limits</td><td>used in 3</td></tr>
-    <tr><td class="mono">prep, gasp</td><td>hinting / grid-fit &amp; anti-alias control</td><td>3 (brief)</td></tr>
-    <tr><td class="mono">meta</td><td>misc metadata (e.g. design/supported script tags)</td><td>not covered — niche</td></tr>
-  </table>
-
-  <!-- ───────────────────────── EXERCISES ───────────────────────── -->
-  <span class="section-tag ex">exercises</span>
-  <h2>Exercises</h2>
-  <p class="legend">Attempt each, then paste your answer/output to your tutor to check.
-  Hints &amp; self-check solutions are collapsible.</p>
-
   <div class="exercise">
-    <div class="x-head"><span class="x-id">1.1</span><span class="x-kind concept">concept</span></div>
+    <div class="x-head"><span class="x-id">1.3</span><span class="x-kind concept">concept</span></div>
     <p><strong>Decode a directory record cold.</strong> The <code>OS/2</code> record's raw bytes are:</p>
     <pre><code>4f 53 2f 32   fe 89 fd aa   00 00 01 98   00 00 00 60</code></pre>
     <p>Give the table's <strong>offset</strong> and <strong>length</strong> in decimal, and confirm
@@ -189,32 +177,6 @@ rangeShift    = 17×16 − 256          = 16    ✓</code></pre>
       offset = 0x00000198 = <strong>408</strong>; length = 0x00000060 = <strong>96</strong>.
       Matches the <code>OS/2 408 96</code> row. (Tag <code>4f 53 2f 32</code> = "OS/2",
       <code>fe 89 fd aa</code> is the checksum.)
-    </details>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">1.2</span><span class="x-kind code">programming</span></div>
-    <p><strong>Predict, then verify, the search fields for ZhenKai.</strong> Run:</p>
-    <pre><code>xxd -l 12 LXGWZhenKaiGB-Regular.ttf</code></pre>
-    <p>Read <code>numTables</code> from the bytes, then <em>compute</em>
-    <code>searchRange / entrySelector / rangeShift</code> by hand and check them against the file.
-    Do they match the formula?</p>
-    <details><summary>Hint</summary>
-      Bytes 4–5 are numTables. Find the largest power of two ≤ that. searchRange = (that)×16,
-      entrySelector = its log₂, rangeShift = numTables×16 − searchRange.
-    </details>
-    <p class="check-note">Paste the 12 bytes and your computed values — I'll confirm.</p>
-  </div>
-
-  <div class="exercise">
-    <div class="x-head"><span class="x-id">1.3</span><span class="x-kind concept">concept</span></div>
-    <p><strong>Identify the collection magic.</strong> Run
-    <code>xxd -l 16 LXGWHybrid.ttc</code>. What are the first 4 bytes as ASCII, and what does that
-    tell you the file is? How does it differ from a plain <code>.ttf</code>'s magic?</p>
-    <details><summary>Show solution</summary>
-      <code>74 74 63 66</code> = "ttcf" — a TrueType/OpenType <em>Collection</em>. Instead of one
-      sfnt, the file starts with a collection header listing byte offsets to several embedded sfnt
-      directories that <em>share</em> table data. We dissect this in Module 7.
     </details>
   </div>
 
@@ -250,6 +212,40 @@ rangeShift    = 17×16 − 256          = 16    ✓</code></pre>
     </details>
     <p class="check-note">Paste your code and its output — I'll verify it against the real file.</p>
   </div>
+
+  <h3>Integrity: checksums</h3>
+  <p>Each record carries a <code>checksum</code> — the table's bytes summed as big-endian
+  <code>uint32</code>s with 32-bit wraparound. The <code>head</code> table additionally stores
+  <code>checkSumAdjustment</code>, a fudge value chosen so the <em>whole file</em> checksums to the
+  constant <code>0xB1B0AFBA</code>. Same job as a CRC in PNG/ZIP: detect corruption, not tampering
+  (that's what the <code>DSIG</code> digital-signature table is for).</p>
+
+  <div class="callout">
+    <span class="label">Required vs optional tables</span>
+    A valid TrueType font must contain <code>cmap, head, hhea, hmtx, maxp, name, OS/2, post</code>
+    plus <code>glyf</code>+<code>loca</code> (for TrueType outlines). Everything else
+    (<code>GPOS, GSUB, gasp, prep, meta, vhea, vmtx…</code>) is optional. WenKai carries the vertical
+    ones because CJK text can be set top-to-bottom.
+  </div>
+
+  <h3>What's <em>inside</em> each table — and where you'll learn it</h3>
+  <p>This module is about the <strong>container</strong>: how tables are indexed and laid out, not what
+  lives inside them. Each table's contents get dissected in its own module — so when a later page says
+  "names live in <code>name</code>", that's a promise, not an assumption. The map:</p>
+  <table>
+    <tr><th>table(s)</th><th>holds</th><th>module</th></tr>
+    <tr><td class="mono">cmap</td><td>character code → glyph ID</td><td>2</td></tr>
+    <tr><td class="mono">glyf, loca</td><td>glyph outlines + their index</td><td>3</td></tr>
+    <tr><td class="mono">hmtx, hhea, vmtx, vhea</td><td>advance widths &amp; line metrics (horizontal + vertical)</td><td>4</td></tr>
+    <tr><td class="mono">head</td><td>units-per-em &amp; bbox (Mod 4); bold/italic <code>macStyle</code> flags (Mod 5)</td><td>4 · 5</td></tr>
+    <tr><td class="mono">name</td><td>human &amp; family name strings</td><td>5</td></tr>
+    <tr><td class="mono">OS/2</td><td>weight, style bits, PANOSE, width class</td><td>5</td></tr>
+    <tr><td class="mono">post</td><td>glyph names &amp; the <code>isFixedPitch</code> flag</td><td>5 (touched)</td></tr>
+    <tr><td class="mono">GSUB, GPOS</td><td>glyph substitution &amp; positioning</td><td>6</td></tr>
+    <tr><td class="mono">maxp</td><td>glyph count &amp; size limits</td><td>used in 3</td></tr>
+    <tr><td class="mono">prep, gasp</td><td>hinting / grid-fit &amp; anti-alias control</td><td>3 (brief)</td></tr>
+    <tr><td class="mono">meta</td><td>misc metadata (e.g. design/supported script tags)</td><td>not covered — niche</td></tr>
+  </table>
 
   <div class="exercise">
     <div class="x-head"><span class="x-id">1.6</span><span class="x-kind concept">concept</span></div>
