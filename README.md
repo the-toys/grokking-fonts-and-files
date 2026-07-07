@@ -4,14 +4,14 @@ A hands-on, browser-based tutorial that takes you from "what even is a font file
 reading and building OpenType fonts with confidence. Every fact is grounded in two real
 fonts (LXGW WenKai Mono GB and LXGW ZhenKai GB) rather than abstract spec prose.
 
-> **Status — work in progress.** Modules **1 (sfnt container)** and **2 (cmap & glyph IDs)** are
-> deep, reviewed, and byte-verified end to end. Modules **3–7** are drafted in the same shape and
-> still being iterated/optimized — their finer details aren't final yet. The two real fonts are
-> bundled (via Git LFS) so anyone can reproduce and check every number.
+All seven modules are reviewed and byte-verified end to end. The two real fonts are
+bundled (via Git LFS) so anyone can reproduce and check every number.
 
-## Run it
+## Read it
 
-It's a static site — no build step.
+**Online:** <https://the-toys.github.io/grokking-fonts-and-files/>
+
+**Locally:** it's a static site — no build step.
 
 ```sh
 open index.html          # macOS
@@ -29,19 +29,20 @@ assets/app.js           sidebar nav, progress (localStorage), copy buttons
 specimens/SPECIMENS.md  every verified number/byte used in the lessons
 specimens/extract.py    reproduce all specimens from the real fonts (fonttools)
 specimens/fonts/        the two real fonts (Git LFS) + their OFL license
+solutions/              worked solutions to the programming exercises
 ```
 
 ## The curriculum
 
-| # | Module | Core question | Status |
-|---|--------|---------------|--------|
-| 1 | The sfnt container | How is a font file laid out? | ✅ verified |
-| 2 | cmap & glyph IDs | How does a character become a glyph? | ✅ verified |
-| 3 | Outlines | How is a glyph drawn? | 🔧 iterating |
-| 4 | Metrics & the em | What makes text line up? | 🔧 iterating |
-| 5 | Identity & families | How do separate files become one family? | 🔧 iterating |
-| 6 | Shaping & layout | How do glyphs combine and move? | 🔧 iterating |
-| 7 | Packaging & frontiers | Collections, variable fonts, web fonts | 🔧 iterating |
+| # | Module | Core question |
+|---|--------|---------------|
+| 1 | The sfnt container | How is a font file laid out? |
+| 2 | cmap & glyph IDs | How does a character become a glyph? |
+| 3 | Outlines | How is a glyph drawn? |
+| 4 | Metrics & the em | What makes text line up? |
+| 5 | Identity & families | How do separate files become one family? |
+| 6 | Shaping & layout | How do glyphs combine and move? |
+| 7 | Packaging & frontiers | Collections, variable fonts, web fonts |
 
 ## Reproduce the data
 
