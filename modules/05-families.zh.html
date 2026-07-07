@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>05 · 身份与家族</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">模块 05</p>
+  <h1>身份与家族</h1>
+  <p class="lede">在任何应用里点一下<strong>加粗</strong>，字形就变了。这些字形从哪来？
+  不是来自某个配置文件，而是来自烙在每个字体 <code>name</code>、<code>OS/2</code>、
+  <code>head</code> 表里的元数据。本模块先从真实的霞鹜文楷等宽 GB（LXGW WenKai Mono GB）里把这些元数据读出来，再拿它们办一件具体的事：
+  <strong>把两款毫不相干的字体——文楷与霞鹜臻楷 GB（LXGW ZhenKai GB）——焊成一个家族</strong>，让它的粗体是
+  <em>真实绘制</em>的第二款字：只改四张小表，不移动一个字形。</p>
+  <p class="legend">练习是<strong>穿插式</strong>的——每道题就跟在它考察的字段后面。概念题
+  附答案；编程题附可折叠的<strong>✓ 核对答案</strong>。</p>
+
+  <!-- ───────────────────────── 1. the stakes ───────────────────────── -->
+  <span class="section-tag concept">概念 · 1</span>
+  <h2>家族是元数据，不是配置文件</h2>
+
+  <p>在你的印象里，“一个字体家族”是一个整体，带几档字重。但落到磁盘上，它通常是
+  <strong>几个彼此独立的文件</strong>——每档字重/样式一个。
+  <code>Regular.ttf</code> 和 <code>Bold.ttf</code> 之间没有任何物理关联：没有清单文件，没有目录约定，
+  操作系统也不强制任何命名规则。那么，请求<em>粗体</em>时，系统是怎么摸到正确的那个文件的？</p>
+
+  <div class="callout key">
+    <span class="label">核心思想</span>
+    字体<strong>家族不是配置文件</strong>，而是烙在每个文件
+    <code>name</code>、<code>OS/2</code>、<code>head</code> 表里的元数据。CoreText（macOS）、DirectWrite
+    （Windows）和 fontconfig/FreeType（Linux）都会把文件<strong>归入同一个家族</strong>，
+    条件是这些文件共享同一个<em>家族名</em>，又各自声明<em>不同的字重/样式</em>。改元数据
+    就是改家族——一条轮廓都不用碰。</div>
+
+  <p>这为什么重要？因为一旦弄错，加粗按钮照样会做出<em>某种</em>效果
+  ——很丑的那种：</p>
+
+  <div class="callout warn">
+    <span class="label">利害所在：伪粗体很丑</span>
+    应用请求粗体时，如果家族里<strong>没有真正的粗体款</strong>，许多渲染器
+    会自己合成一个：用算法把 Regular 的轮廓<em>加粗涂抹</em>（embolden）或<em>倾斜</em>（oblique）。
+    得到的“伪粗体”/“伪斜体”，比起真正绘制的粗体，粗细不匀、效果粗糙。
+    <strong>提供一款真正绘制的粗体，并把标签写对、让操作系统找得到它，就是本模块的
+    全部任务。</strong>下面每个字段的存在，都是为了让你向文楷请求粗体时，操作系统交出臻楷
+    ——一款笔画确实更重、真实绘制的楷体。</div>
+
+  <p>所以计划很具体：拿两份互不相干的文件，只改必要的元数据，让操作系统看到
+  <em>一个</em>家族，里面有真 Regular 和真 Bold。接下来的四节，每节回答一个问题，顺势引出一个字段
+  ——<em>靠什么把文件归成一组？哪一个是粗体？“粗体”存成什么样？字体
+  选择器怎么知道它是等宽的？</em>——然后我们真刀真枪地做一遍改名重标。</p>
+
+  <!-- ───────────────────────── 2. name table ───────────────────────── -->
+  <span class="section-tag concept">概念 · 2</span>
+  <h2><code>name</code> 表：靠什么把两个文件归成一个家族</h2>
+
+  <p>第一个问题：<strong>操作系统凭什么判定两个文件属于一家？</strong>答案
+  在 <code>name</code> 表里——一袋字符串。每条记录以四元组
+  <code>(platformID, encodingID, languageID, nameID)</code> 作键，因此同一个逻辑字符串可以按
+  多种编码、多种语言各存一份。<code>nameID</code> 说明这个字符串<em>是什么含义</em>：</p>
+  <table>
+    <tr><th>nameID</th><th>含义</th><th>备注</th></tr>
+    <tr><td class="mono">1</td><td>家族名</td><td>传统家族名（RIBBI 分组）</td></tr>
+    <tr><td class="mono">2</td><td>子家族名</td><td>只能取 <strong>Regular / Bold / Italic / Bold Italic</strong> 之一——所谓 “RIBBI” 集合</td></tr>
+    <tr><td class="mono">3</td><td>唯一 ID</td><td>应当全局唯一</td></tr>
+    <tr><td class="mono">4</td><td>全名</td><td>供人阅读，如 "Family Bold"</td></tr>
+    <tr><td class="mono">6</td><td>PostScript 名</td><td>ASCII、<strong>不含空格</strong>，必须全局唯一</td></tr>
+    <tr><td class="mono">16 / 17</td><td>排印家族名 / 子家族名</td><td><strong>存在时覆盖 1/2</strong>；用于样式多于 4 种的家族</td></tr>
+  </table>
+  <p>分组机制很简单：<strong>nameID 1（家族名）相同，nameID 2
+  （子家族名）不同。</strong>给两个文件写上一模一样的家族字符串，一个标 "Regular"、另一个标
+  "Bold"，操作系统就会把它们归档成一个家族、两个字款。这个共享的家族名，就是我们
+  要用的粘合剂。</p>
+  <p>有个坑值得现在就记下，因为它在最后会咬我们一口。1/2 这对字段只能表达 RIBBI
+  四种样式，因为 <code>2</code> 被限定在那个集合里。带 Light、Medium、SemiBold…… 的家族
+  得靠 <strong>16/17</strong>：真名自由地写在 16/17 里，1/2 则把一切折叠到 Regular/Bold 上，
+  安抚老应用。<strong>16/17 一旦存在就以它们为准</strong>——所以只要任一源字体
+  带着它们，就会盖过我们写的 1/2，把两个文件重新拆开。因此“删掉 16/17”是合并流程里
+  正式的一步，不是可有可无的收尾。</p>
+
+  <!-- ───────────────────────── 3. weight ───────────────────────── -->
+  <span class="section-tag concept">概念 · 3</span>
+  <h2><code>OS/2.usWeightClass</code>：“加粗”选中的那个数字</h2>
+  <p>现在操作系统看到了一个家族、两个字款。第二个问题：<strong>用户点加粗时，系统在
+  两者之间挑哪个？</strong>凭一个数字。字重就是
+  <code>OS/2.usWeightClass</code> 里的一个普通整数：<code>400</code> = Regular，<code>700</code> = Bold（范围
+  100–900）。应用“请求粗体”时，底层实际是在向家族索要字重等级为
+  700 的那一款。这个数字写错，加粗按钮就会选中错误的文件——或者什么都选不到。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.3</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>用你自己的话讲讲家族粘合剂。</strong>负责分组的两个字段你已经都认识了。
+    用两三句话解释：两个物理上分离的字体文件，是怎么进到同一个“家族”并且
+    加粗可用的——并点名起作用的具体元数据。</p>
+    <details><summary>看答案</summary>
+      两个文件带<strong>相同的 nameID 1 家族字符串</strong>，但 nameID 2
+      子家族不同（"Regular" vs "Bold"）、<code>OS/2.usWeightClass</code> 不同（400 vs 700），且
+      <code>fsSelection</code>/<code>macStyle</code> 样式位与之匹配。操作系统的字体系统
+      （CoreText / DirectWrite / fontconfig）按家族名把文件分组，并把“粗体”请求
+      路由到声明字重 700 的那一款——全程不涉及任何配置文件。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 4. style bits ───────────────────────── -->
+  <span class="section-tag concept">概念 · 4</span>
+  <h2>样式位：存两份，还要互相校验</h2>
+  <p>“这是粗体”这件事，不止记在子家族名和字重数字里。粗体/斜体
+  的事实<em>还</em>会<strong>以位标志的形式，冗余地记录在两张表里</strong>，渲染器会拿两处
+  互相校验。两处必须一致：</p>
+  <table>
+    <tr><th>字段</th><th>位</th><th>值</th><th>含义</th></tr>
+    <tr><td class="mono">OS/2.fsSelection</td><td>0</td><td class="mono">0x01</td><td>ITALIC</td></tr>
+    <tr><td class="mono">OS/2.fsSelection</td><td>5</td><td class="mono">0x20</td><td>BOLD</td></tr>
+    <tr><td class="mono">OS/2.fsSelection</td><td>6</td><td class="mono">0x40</td><td>REGULAR</td></tr>
+    <tr><td class="mono">head.macStyle</td><td>0</td><td class="mono">0x01</td><td>BOLD</td></tr>
+    <tr><td class="mono">head.macStyle</td><td>1</td><td class="mono">0x02</td><td>ITALIC</td></tr>
+  </table>
+  <p>如果 <code>fsSelection</code> 说 BOLD 而 <code>macStyle</code> 说不是粗体，这款字就
+  自相矛盾了：不同平台读不同的表，对这个文件是什么会得出不同结论。所以我们的
+  改名重标必须把<em>两处</em>都写上，而且写得一致。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.1</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>解码选择位。</strong>文楷的 <code>OS/2.fsSelection</code> 是
+    <code>0b1000000</code>。置位的是第几位？含义是什么？换成
+    <code>0b0100000</code> 又是什么意思？</p>
+    <details><summary>看答案</summary>
+      <code>0b1000000</code> = 第 6 位置位 = <strong>REGULAR</strong>（0x40）——文楷作为
+      Regular 款所带的值。<code>0b0100000</code> = 第 5 位置位 = <strong>BOLD</strong>
+      （0x20）——合并时我们给臻楷设的值。（第 0 位 = ITALIC，0x01。）
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.2</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>一件事记两处。</strong>为什么这个格式要把粗体标志
+    <em>同时</em>存进 <code>OS/2.fsSelection</code> <em>和</em> <code>head.macStyle</code>？两处不一致
+    有什么风险？</p>
+    <details><summary>看答案</summary>
+      历史层叠所致：<code>head.macStyle</code> 是早年 Apple/TrueType 的样式字段，
+      <code>OS/2.fsSelection</code> 是后来 Windows/OpenType 的。两者都留存至今，不同
+      渲染器/平台各读各的。一旦不一致，这款字就<strong>自相矛盾</strong>
+      ——一个平台当它是粗体，另一个当它是常规体，于是它可能被选进错误的槽位，
+      或被套上伪样式。这正是合并时要把两处写一致的原因。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 5. panose ───────────────────────── -->
+  <span class="section-tag concept">概念 · 5</span>
+  <h2>PANOSE 与等宽标志</h2>
+  <p>身份还剩最后一块，因为这是个<em>等宽</em>家族，而字体选择器支持按等宽
+  筛选。选择器不会去量字形——它读的是一份<em>自我声明</em>。<code>OS/2.panose</code> 是
+  10 个字节的粗粒度视觉分类（衬线风格、字重、比例……）。这里要紧的是索引 3
+  的那个字节，<strong>bProportion</strong>：<code>9</code>=Monospaced（等宽），<code>3</code>=Modern
+  （比例宽度）。应用判断“这是等宽吗？”还会看另一个标志：<code>post.isFixedPitch</code>。
+  注意两者都只是<em>声明</em>——它们描述字体，并不能<em>让</em>字体变成等宽
+  （真正决定等宽的是前进宽度，模块 4）。改名重标必须把它们设置好，混合家族才能继续
+  出现在等宽筛选之下。</p>
+
+  <!-- ───────────────────────── 6. the retag walkthrough ───────────────────────── -->
+  <span class="section-tag walk">解读 · 6</span>
+  <h2>文楷的真实身份，以及把它重标进一个家族</h2>
+
+  <p>需要的字段就这么多。下面是文楷的原始身份，直接从
+  <code>LXGWWenKaiMonoGB-Regular.ttf</code> 里读出——每一行都对应上面几节讲过的一个字段：</p>
+  <table>
+    <tr><th>字段</th><th>值</th><th>含义</th></tr>
+    <tr><td class="mono">OS/2 version</td><td class="mono">4</td><td>表的布局/特性级别</td></tr>
+    <tr><td class="mono">usWeightClass</td><td class="mono">400</td><td>Regular</td></tr>
+    <tr><td class="mono">fsSelection</td><td class="mono">0b1000000</td><td>第 6 位置位 = REGULAR（0x40）</td></tr>
+    <tr><td class="mono">head.macStyle</td><td class="mono">0b0</td><td>既非粗体也非斜体</td></tr>
+    <tr><td class="mono">achVendID</td><td class="mono">"LXGW"</td><td>4 字节厂商标签</td></tr>
+    <tr><td class="mono">PANOSE</td><td class="mono">[2,2,5,9,0,0,0,0,0,0]</td><td>byte0=2 拉丁正文；<strong>byte3=bProportion=9=等宽</strong></td></tr>
+  </table>
+
+  <p>以及 Windows 平台（platformID 3）下相关的 <code>name</code> 记录：</p>
+  <table>
+    <tr><th>nameID</th><th>值</th></tr>
+    <tr><td class="mono">1 (Family)</td><td class="mono">"LXGW WenKai Mono GB"</td></tr>
+    <tr><td class="mono">1 (Family, zh)</td><td class="mono">"霞鹜文楷等宽 GB"</td></tr>
+    <tr><td class="mono">2 (Subfamily)</td><td class="mono">"Regular"</td></tr>
+    <tr><td class="mono">4 (Full name)</td><td class="mono">"LXGW WenKai Mono GB"</td></tr>
+    <tr><td class="mono">6 (PostScript)</td><td class="mono">"LXGWWenKaiMonoGB-Regular"</td></tr>
+  </table>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.4</span><span class="x-kind code">编程题</span></div>
+    <p><strong>亲手读出身份。</strong>改动任何东西之前，先确认初始状态。
+    用 fontTools 打开文楷，打印 <code>usWeightClass</code>、<code>bin(fsSelection)</code>、
+    <code>bin(head.macStyle)</code> 和 name ID 1/2/6，与上面两张表对一对。</p>
+    <pre><code><span class="cmt"># python this.py LXGWWenKaiMonoGB-Regular.ttf</span>
+<span class="kw">import</span> sys
+<span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+f = TTFont(sys.argv[<span class="num">1</span>])
+os2, head, name = f[<span class="str">"OS/2"</span>], f[<span class="str">"head"</span>], f[<span class="str">"name"</span>]
+<span class="fn">print</span>(<span class="str">"usWeightClass"</span>, os2.usWeightClass)
+<span class="fn">print</span>(<span class="str">"fsSelection  "</span>, <span class="fn">bin</span>(os2.fsSelection))
+<span class="fn">print</span>(<span class="str">"macStyle     "</span>, <span class="fn">bin</span>(head.macStyle))
+<span class="kw">for</span> i <span class="kw">in</span> (<span class="num">1</span>, <span class="num">2</span>, <span class="num">6</span>):
+    <span class="fn">print</span>(<span class="str">"name"</span>, i, repr(name.getDebugName(i)))</code></pre>
+    <p class="check-note">把你的输出贴给 AI 导师，让它核对 usWeightClass=400、fsSelection=0b1000000、
+    macStyle=0b0，以及三条 name 字符串是否与表格一致。</p>
+  </div>
+
+  <p>现在开始改名重标。我们手上有两份<em>互不相干</em>的文件：文楷（笔画轻、带书法味的楷体）和
+  臻楷（笔画更重的楷体）。目标是一个家族 <code>"LXGW WenKai ZhenKai Mono GB"</code>，其中
+  Regular = 文楷、Bold = 臻楷。我们会写一个小函数——就叫 <code>build_face()</code>——
+  给每个文件重新打标签，让操作系统把它们归成一组。每一步写入的都是你刚认识的一个字段：</p>
+
+  <h3>1 · 家族相同，子家族不同 <span class="legend">（概念 2）</span></h3>
+  <p>两个文件的 nameID 1 写入<strong>一模一样</strong>的 <code>FAMILY</code> 字符串，
+  nameID 2 则各不相同：</p>
+<pre><code>set_name(font, NAME_FAMILY, family)      <span class="cmt"># id 1 — SAME on both files</span>
+set_name(font, NAME_SUBFAMILY, style)    <span class="cmt"># id 2 — "Regular" vs "Bold"</span></code></pre>
+  <p>这个共享的家族名就是粘合剂。<code>set_name()</code> 会把每条记录写给
+  <strong>两个</strong>要紧的平台——Windows <code>(3,1,0x409)</code> 和 Mac
+  <code>(1,0,0)</code>——写之前先调 <code>removeNames()</code> 清掉同 ID 的
+  旧记录，确保没有原始字符串残留（这也是 <code>value</code> 必须是 ASCII 的原因：
+  Mac 记录才编码得了它）。</p>
+
+  <h3>2 · 字重数字 <span class="legend">（概念 3）</span></h3>
+<pre><code>os2.usWeightClass = weight   <span class="cmt"># 400 for WenKai, 700 for ZhenKai</span></code></pre>
+  <p>加粗按钮解析的，说白了就是这个数字：向 <code>FAMILY</code> 索要字重 700，
+  递到你手上的就是臻楷。</p>
+
+  <h3>3 · 样式位，两处都写 <span class="legend">（概念 4）</span></h3>
+  <p>先清掉三个互斥的选择位，再只置上其中一个，
+  并把粗体位镜像到 <code>macStyle</code>，让两张表保持一致：</p>
+<pre><code>os2.fsSelection &amp;= ~(FS_ITALIC | FS_BOLD | FS_REGULAR)
+os2.fsSelection |= FS_BOLD if bold else FS_REGULAR   <span class="cmt"># 0x20 or 0x40</span>
+head.macStyle  &amp;= ~(MAC_BOLD | MAC_ITALIC)
+if bold:
+    head.macStyle |= MAC_BOLD                        <span class="cmt"># 0x01</span></code></pre>
+  <p>结果：臻楷的 <code>fsSelection</code> 置第 5 位（BOLD，0x20）、<code>macStyle</code> 置第
+  0 位（BOLD，0x01）；文楷保持 <code>fsSelection</code> 第 6 位（REGULAR，0x40）、
+  <code>macStyle = 0</code>。在每个平台上都自洽。</p>
+
+  <div class="callout proof">
+    <span class="label">成果</span>
+    现在，任何用 <code>"LXGW WenKai ZhenKai Mono GB"</code> 渲染并请求粗体的应用，拿到的都是
+    <strong>臻楷</strong>——真实绘制的粗笔画。没有伪粗体的涂抹，也不用逐应用配置。
+    这相当于 Linux fontconfig 里 <code>&lt;alias&gt;</code>“把
+    臻楷当作文楷粗体”那条规则的跨平台版本——只不过是靠<em>直接改字体</em>而非写规则文件实现的，
+    所以在 macOS 和 Windows 上同样有效。</div>
+
+  <h3>4 · 声明等宽，不动一个字形 <span class="legend">（概念 5）</span></h3>
+<pre><code>post.isFixedPitch = 1 if monospace else 0
+if getattr(os2, "panose", None) is not None:
+    os2.panose.bProportion = 9 if monospace else 3   <span class="cmt"># 9=Mono, 3=Modern</span></code></pre>
+  <p>这一步只翻转字体选择器用来筛选的那两个<em>标志</em>，<strong>不</strong>移动
+  任何前进宽度——也不需要移，因为 CJK 字形本来就是全角的
+  （前进宽度 == 1 em，模块 4）。这条等式我们在模块 4 里已经证过：臻楷的
+  <code>一</code> 前进 <code>1000/1000 em</code>，与文楷完全一致，所以粗体 CJK 列能和常规体
+  对齐，无需重新调整度量。</p>
+
+  <h3>5 · 给每一款独一无二的名字——3 与 6 <span class="legend">让混合家族不与原版相撞</span></h3>
+<pre><code>ps_name = f"{family.replace(' ', '')}-{style}"   <span class="cmt"># e.g. LXGWWenKaiZhenKaiMonoGB-Bold</span>
+set_name(font, NAME_UNIQUE, ps_name)             <span class="cmt"># id 3 — Unique ID</span>
+set_name(font, NAME_PS, ps_name)                 <span class="cmt"># id 6 — PostScript name (ASCII, no spaces)</span></code></pre>
+  <p><code>nameID 6</code>（PostScript 名）和 <code>3</code>（唯一 ID）按规范应当
+  <strong>全局唯一</strong>——macOS 的 CoreText 就拿它们当字体的<em>身份键</em>。你的机器上
+  多半还装着原版的文楷和臻楷，所以如果重标后的 Regular 成员仍沿用
+  文楷的原名 <code>"LXGWWenKaiMonoGB-Regular"</code>，就会有两个文件主张同一个身份。
+  CoreText 对每个 PostScript 名<em>只保留一款字体</em>，会做去重——留下的可能是原版，
+  而不是我们的。届时对我们家族的请求会悄悄解析到<strong>错误的文件</strong>：混合家族
+  渲染不出来，或者 Regular↔Bold 的关联断掉，因为它需要的成员被遮蔽了。把每个
+  名字都从新家族名派生，就给了每一款独立的身份，与原版和平共处。</p>
+
+  <h3>6 · 删掉排印名——16 与 17 <span class="legend">让简单的 RIBBI 名生效</span></h3>
+<pre><code>font["name"].removeNames(nameID=NAME_TYPO_FAMILY)     <span class="cmt"># drop id 16</span>
+font["name"].removeNames(nameID=NAME_TYPO_SUBFAMILY)  <span class="cmt"># drop id 17</span></code></pre>
+  <p>回想概念 2：<strong>16/17 一旦存在就覆盖 1/2</strong>。只要任一源字体
+  还带着它们，操作系统读到的就是各文件<em>原来</em>的排印家族——两个
+  文件立刻被拆回各自的家族，我们刚搭好的 Regular+Bold 分组随即报废。
+  剥掉 16/17，操作系统就只能落到我们简单的 RIBBI（1/2）名字上。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.5</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>为什么要唯一 ID？</strong>为什么 nameID 3（唯一 ID）和 nameID 6（PostScript）
+    必须在各别名之间互不相同，<em>并且</em>也不同于原版？两款字共用它们时，
+    macOS 上会出什么 bug？</p>
+    <details><summary>看答案</summary>
+      CoreText 在一定程度上靠 ID 3/6 识别一款字。两个文件共用时，CoreText 可能把
+      其中一个对另一个<strong>去重或遮蔽</strong>——当成同一款字——在请求该家族时端上
+      <em>错误的文件</em>（属于字体优先级/遮蔽类 bug）。给每个别名一个唯一的
+      <code>family-style</code> 形式的 PostScript 名/唯一 ID，每一款就都保持独立，
+      系统交付的才是混合家族，而不是仍然装在机器上的原版。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 7. what it doesn't touch ───────────────────────── -->
+  <span class="section-tag concept">概念 · 7</span>
+  <h2>改名重标刻意不碰什么</h2>
+  <p>上面所有改动只落在四张表里：<code>name</code>、<code>OS/2</code>、<code>head</code>、
+  <code>post</code>。重量级的表——<code>glyf</code>、<code>cmap</code>、<code>hmtx</code>——保持
+  <strong>逐字节不变</strong>。这正是模块 1 那一课兑现的时刻：表是彼此独立的
+  数据块，所以你重写几 KB 的元数据，24 MB 的轮廓原封不动。这
+  也是共享表 <code>.ttc</code> 得以成立的前提：每个 Regular 款的 <code>glyf</code> 字节完全
+  相同（每个 Bold 款亦然），集合写入器就能把这份轮廓数据只存<em>一份</em>——为模块 7 埋下伏笔。</p>
+
+  <div class="callout proof">
+    <span class="label">自己动手验证</span>
+    <code>specimens/extract.py LXGWWenKaiMonoGB-Regular.ttf</code> 会打印出上面展示的
+    usWeightClass、fsSelection、macStyle、PANOSE 和 name 记录——即改名重标的输入。把上述六步
+    套用到每个文件的副本上，你就亲手组装出了这个家族；模块 7 再把
+    重标后的各款打包成一个 <code>.ttc</code>。</div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">5.6</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>迷你综合题：表的清单。</strong>准确列出合并会改哪些表、
+    刻意不碰哪些表。不碰 <code>glyf</code>/<code>hmtx</code> 为什么能保住终端里的
+    列对齐（模块 4）？它又是怎么让共享表 TTC（模块 7）成为可能的？</p>
+    <details><summary>看答案</summary>
+      <strong>改动的：</strong><code>name</code>（ID 1,2,3,4,6；删除 16/17）、<code>OS/2</code>
+      （usWeightClass、fsSelection、panose.bProportion）、<code>head</code>（macStyle）、
+      <code>post</code>（isFixedPitch）。<strong>不碰的：</strong><code>glyf</code>、<code>cmap</code>、
+      <code>hmtx</code>、<code>loca</code> 及其余全部。不动 <code>hmtx</code>/<code>glyf</code>
+      意味着前进宽度不变——CJK 保持全角（前进宽度 == 1 em），终端里粗体列
+      与常规体对齐，无需重新调整度量。又因为每个 Regular 款共享
+      逐字节相同的 <code>glyf</code>（每个 Bold 款亦然），<code>.ttc</code> 写入器就能把
+      这份重量级数据只存<em>一份</em>（靠 <code>shareTables</code>）——集合的体积约等于两份源文件之和，而不是 9 倍。
+      这就是模块 7 的内容。
+    </details>
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="5">标记本模块完成</button>
+
+  <div class="pager">
+    <a class="prev" href="04-metrics.zh.html"><span class="dir">←</span><span class="ttl">04 · 度量与 em</span></a>
+    <a class="next" href="06-shaping.zh.html"><span class="dir">下一模块 →</span><span class="ttl">06 · 整形与布局</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

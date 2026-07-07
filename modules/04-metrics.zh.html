@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04 · 度量与 em</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">模块 04</p>
+  <h1>度量与 em</h1>
+  <p class="lede">轮廓（模块 3）说的是字形长什么<em>样</em>；度量说的是它<em>坐</em>在哪儿：设计网格有多大、
+  笔要向前走多远才到下一个字形、基线和行的上下缘落在哪里。我们按同样的路子层层搭起来——先是 em，
+  然后是每个字形的前进宽度，接着是它怎么存储、这些数字意味着什么，最后落到原始字节。</p>
+  <p class="legend">练习<strong>穿插在正文里</strong>。概念题附有答案；编程题带一个可折叠的
+  <strong>✓ 核对答案</strong>。</p>
+
+  <!-- ───────────────────────── 1. the em ───────────────────────── -->
+  <span class="section-tag concept">概念 · 1</span>
+  <h2>em 方格与 unitsPerEm</h2>
+  <p>字形上的点不是以像素计的——它们以<strong>字体单位</strong>落在一张正方形网格上，这张网格叫
+  <strong>em 方格</strong>，边长为 <code>head.unitsPerEm</code>。本字体里是 <strong>1000</strong>
+  （另一个常见取值是 <strong>2048</strong>；TrueType 字体往往选 2 的幂）。这张网格不绑定任何显示尺寸：</p>
+  <div class="callout key">
+    <span class="label">em 把设计与尺寸解耦</span>
+    以 <strong>N px</strong> 渲染时，一个 em 恰好就是 <strong>N px</strong>，字体单位值
+    <code>c</code> 落在 <code>c / unitsPerEm × N</code> 像素处。设计师在固定的 1000 单位世界里作图；
+    渲染器再按要求的尺寸缩放——和 SVG 的 <code>viewBox</code>、与 DPI 无关的 UI、矢量图形是同一个思路：
+    “用抽象单位设计，绘制时再缩放”。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.1</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>单位换像素。</strong>在 <strong>16 px</strong> 下，<code>unitsPerEm = 1000</code>，
+    前进宽度 1000 和 500 各合多少像素？字体单位坐标 <code>y = 750</code> 的点又在多少 px 处？</p>
+    <details><summary>看答案</summary>
+      px = 值 / unitsPerEm × N。前进宽度 1000 → 1000/1000×16 = <strong>16 px</strong>；前进宽度 500 →
+      <strong>8 px</strong>。点 <code>y = 750</code> → 750/1000×16 = 基线上方 <strong>12 px</strong>。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 2. advance & side bearing ───────────────────────── -->
+  <span class="section-tag concept">概念 · 2</span>
+  <h2>前进宽度与侧边距</h2>
+  <p>每个字形都有一个<strong>原点</strong>，坐在<strong>基线</strong>上（<code>y = 0</code>；
+  升部朝 +y，降部朝 −y）。两个水平方向的数字决定它摆在哪儿：</p>
+  <ul>
+    <li><strong>前进宽度</strong>——笔从本字形的原点向右走多远，到达<em>下一个</em>字形的原点。
+      定住列位置的是它，不是墨迹。</li>
+    <li><strong>左侧边距（lsb）</strong>——原点到字形最左侧墨迹的空隙。<strong>右侧边距</strong>
+      是推出来的（<code>advance − lsb − inkWidth</code>），不单独存储。</li>
+  </ul>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.2</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>认清各个部分。</strong>某字形前进宽度 500、lsb 21，墨迹横跨 x = 21…470。
+    右侧边距是多少？若把前进宽度改成 480 而不动墨迹，<em>下一个</em>字形在视觉上会有什么变化？</p>
+    <details><summary>看答案</summary>
+      rsb = advance − lsb − inkWidth = 500 − 21 − (470−21) = 500 − 21 − 449 = <strong>30</strong>。
+      把前进宽度缩到 480 完全不碰本字形的墨迹——它把<em>下一个</em>字形往左拉 20 个单位
+      （间距收紧），因为下一个原点 = 本原点 + 前进宽度。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 3. how stored, get the numbers ───────────────────────── -->
+  <span class="section-tag walk">解读 · 3</span>
+  <h2>hmtx + hhea：度量怎么存、怎么读</h2>
+  <p>每个字形的水平度量存在 <code>hmtx</code> 里。水平头部 <code>hhea</code> 存着一个计数
+  <code>numberOfHMetrics</code>；<code>hmtx</code> 先存这么多个 <code>(advance, lsb)</code>
+  对，<em>剩下的</em>每个字形<strong>只存一个 lsb</strong>——这些尾部字形全都
+  <strong>复用最后一个前进宽度</strong>。所以 <code>numberOfHMetrics</code> 可以 &lt;
+  <code>numGlyphs</code>（一种游程压缩的小技巧，第 5 步看字节时会遇到）。用库读度量：</p>
+<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+font = TTFont(path)
+name = font.getBestCmap()[<span class="num">0x4E00</span>]    <span class="cmt"># '一' -> "u4E00"</span>
+font[<span class="str">"hmtx"</span>][name]              <span class="cmt"># (advance, lsb) tuple, e.g. (1000, 59)</span>
+font[<span class="str">"head"</span>].unitsPerEm         <span class="cmt"># 1000</span>
+font[<span class="str">"hhea"</span>].numberOfHMetrics   <span class="cmt"># 46821  (&lt; numGlyphs 46830)</span></code></pre>
+  <p>三个字形的实测数字：</p>
+  <table class="mono">
+    <tr><th>字形</th><th>advance</th><th>lsb</th><th>折合 em</th></tr>
+    <tr><td>'A' (U+0041)</td><td>500</td><td>21</td><td>0.5——半角</td></tr>
+    <tr><td>'一' (U+4E00)</td><td>1000</td><td>59</td><td>1.0——全角</td></tr>
+    <tr><td>'i' (U+0069)</td><td>500</td><td>73</td><td>0.5——半角</td></tr>
+  </table>
+
+  <figure>
+    <img src="../specimens/metrics-anatomy.png"
+         alt="左：字形 A 的各项度量。右：全角与半角的列对齐。">
+    <figcaption><strong>左——单个字形的度量（'A'）。</strong>原点在基线上（y=0），前进宽度
+    500，lsb 21，虚线是几套相互竞争的升部/降部数值（见第 4 步）。墨迹待在前进宽度盒子里面；
+    定间距的是盒子，不是墨迹。<strong>右——列为什么对得齐。</strong>
+    '一' 前进 1000 = 整整一个 em（一格）；'A' 和 'i' 各前进 500 = 半个 em，两个正好填满一个汉字格。
+    两者侧边距不同（21 对 73），但定住列的是<em>前进宽度</em>。</figcaption>
+  </figure>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.3</span><span class="x-kind code">编程题</span></div>
+    <p><strong>网格真的成立吗？普查所有前进宽度。</strong>正文声称<em>每个</em>汉字字形
+    前进 1 em、拉丁字形前进 0.5 em——可它只给你看了三个精心挑选的字形。谁都别信：
+    对 <code>hmtx</code> 里<strong>全部</strong> <code>numGlyphs</code> 个字形的前进宽度做直方图（不
+    只是 cmap 能到达的那些）。整个字体实际用了多少种<em>不同的</em>前进宽度？
+    逐一列出每种的出现次数和折合 em 的大小。有没有上面那张三行表没让你料到的东西
+    ——什么样的字形会有那种前进宽度？</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      <code>font['hmtx'].metrics</code> 是覆盖<em>全部</em>字形的
+      <code>{name: (advance, lsb)}</code> 字典。<code>from collections import Counter; Counter(a for a, _ in
+      font['hmtx'].metrics.values())</code> 就能分桶。每个宽度除以
+      <code>font['head'].unitsPerEm</code> 得到 em 值。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      全部 46,830 个字形里恰好只有<strong>三种</strong>前进宽度：
+      <code>1000</code>（1.000 em，×44789）、<code>500</code>（0.500 em，×1973），还有那张表藏起来的一种——
+      <code>0</code>（0.000 em，×68）。1000/500 这对搭配正是重点：1 em 和它的精确一半
+      <em>可通约</em>，列才对得齐（论断成立——cmap 里全部 20,992 个汉字都恰好
+      1 em，无一例外）。<strong>零宽</strong>这一桶才是意外：它们是
+      <strong>结合附标</strong>（比如模块 3 里的 <code>dieresiscomb</code>）——它们不带前进宽度，
+      因为它们叠在前一个字形上，不推笔。
+    </details>
+    <details><summary>更进一步（选做）</summary>
+      对简单（非复合）字形，存储的 <code>lsb</code> 应当等于 <code>glyf</code> 里轮廓的
+      <code>xMin</code>。挑几个验证一下——这把两张表串起来了：<code>hmtx</code> 里的间距和
+      <code>glyf</code> 里的墨迹描述的是同一条左边缘。
+    </details>
+    <p class="check-note">上方可自查——也可以把你的直方图贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.4</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>会缩水的表。</strong>为什么 <code>numberOfHMetrics</code>（46821）可以比
+    <code>numGlyphs</code>（46830）小？尾部那 9 个字形的前进宽度用什么？</p>
+    <details><summary>看答案</summary>
+      <code>hmtx</code> 存 46821 个完整的 <code>(advance, lsb)</code> 对，剩下
+      <code>46830 − 46821 = 9</code> 个字形只存 lsb 值。这 9 个没有自己的前进宽度；各自复用
+      对数组里<strong>最后一个</strong>前进宽度（即字形 46820 的）。生成字体的工具会把共用同一
+      前进宽度的一串字形排到末尾，好让表省掉 9 个冗余的前进宽度——游程省略。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 4. what the numbers mean ───────────────────────── -->
+  <span class="section-tag concept">概念 · 4</span>
+  <h2>这些数字意味着什么</h2>
+  <h3>全角 = 1 em ⇒ 列对齐</h3>
+  <p><code>'一'</code> 恰好前进 <strong>1 em</strong>，这个字体里<em>每一个</em>汉字都是如此。
+  终端网格在中文下不乱，原因正在这里：每个汉字字形填满一格。拉丁字形前进 <strong>0.5 em</strong>，
+  是精确的约数，两个拉丁字形填满一个汉字格，网格就守得住。（像 537 这样随意的前进宽度会把它
+  弄垮——对齐要求各前进宽度可通约。）</p>
+
+  <div class="callout proof">
+    <span class="label">为什么重要：把两款字体并成一个家族</span>
+    设想把本教程附带的两款字体焊成一个家族——<strong>霞鹜文楷等宽 GB（LXGW WenKai Mono GB）当
+    Regular，霞鹜臻楷 GB（LXGW ZhenKai GB）当 Bold</strong>——让粗体成为一款<em>货真价实的第二
+    字体</em>，而不是算法糊出来的伪粗体。要让 regular→bold 的切换不打乱汉字列，
+    每个汉字在两款字体里必须前进<em>同样的宽度</em>。而事实正是如此：两款都把
+    <code>'一'</code> 前进恰好 <strong>1000/1000 = 1.000 em</strong>。所以合并可以原样复用度量，
+    <strong>无需重算度量</strong>——检查两款字体的 advance/unitsPerEm 是否相等，正是拼装这种
+    混合家族之前该做的一道体检。（模块 5 会真的把这个家族做出来。）
+  </div>
+
+  <h3>行高：三套相互打架的升部/降部数值</h3>
+  <p>有名的坑来了。一个字体带着<strong>三套</strong>行的垂直度量，而各应用在该认哪一套上
+  各执一词：</p>
+  <table class="mono">
+    <tr><th>来源</th><th>ascent</th><th>descent</th><th>lineGap</th><th>谁在用</th></tr>
+    <tr><td>hhea.ascent/descent/lineGap</td><td>928</td><td>−241</td><td>0</td><td>Mac/CoreText 倾向用这套</td></tr>
+    <tr><td>OS/2 sTypoAscender/Descender/LineGap</td><td>880</td><td>−120</td><td>0</td><td>USE_TYPO_METRICS 置位时用</td></tr>
+    <tr><td>OS/2 usWinAscent/usWinDescent</td><td>928</td><td>241</td><td>—</td><td>Windows 的裁剪/行框</td></tr>
+  </table>
+  <p>三套数字<strong>互相矛盾</strong>：按 hhea 求和，行高是 928+241 = <strong>1169</strong>
+  个单位；按 sTypo 求和是 880+120 = <strong>1000</strong>。同一个文件，在不同应用里行高不同
+  ——这是跨平台行高问题里最常见的一桩。OS/2 <code>fsSelection</code> 的
+  <strong>USE_TYPO_METRICS</strong> 位（0x80）本意是声明“优先用 sTypo 这套”——而这个字体里
+  该位是<strong>关的</strong>（<code>fsSelection = 0b1000000</code>），应用于是退回 hhea/win，
+  你拿到的就是更高的 1169。</p>
+
+  <h3>竖排</h3>
+  <p>中文自上而下竖排时，对应的是 <code>vhea</code>/<code>vmtx</code>（这个字体里两张都有——
+  模块 1 的表目录里你见过）。它们装的不是前进<em>宽度</em>，而是前进
+  <strong>高度</strong>：竖列里笔要往下落多远才到下一个字形。这与模块 6 的
+  <code>vert</code> 特性接上了头——那个特性负责换上竖排字形。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.5</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>一个文件，两种行高。</strong>说出三处升部/降部的来源及本字体的取值，并具体
+    解释两个应用如何把这个字体画出不同的行高。USE_TYPO_METRICS 位是干什么的？这里置位了吗？</p>
+    <details><summary>看答案</summary>
+      (1) <code>hhea</code> 928/−241/0；(2) OS/2 <code>sTypo</code> 880/−120/0；(3) OS/2 <code>usWin</code>
+      928/241。用 hhea 的应用画出 928+241 = 1169 单位的行；用 sTypo 的画出 880+120 = 1000——
+      明显更紧。<strong>USE_TYPO_METRICS</strong>（fsSelection 的 0x80 位）告诉应用优先用
+      sTypo 这套；这里它是<strong>关的</strong>，应用于是用 hhea/win，得到更高的 1169。
+      哪套胜出没有统一规则，同一个文件在不同平台就渲染出不同的行高。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 5. hand-parse hmtx ───────────────────────── -->
+  <span class="section-tag binary">二进制细读 · 5</span>
+  <h2>手工解析 hmtx</h2>
+  <p><code>hmtx</code>（文件偏移 504，模块 1 查到的）是迄今最简单的表——只有两段：</p>
+<pre>hmtx:  [ (adv,lsb)₀ ][ (adv,lsb)₁ ] … [ (adv,lsb)₄₆₈₂₀ ][ lsb₄₆₈₂₁ ] … [ lsb₄₆₈₂₉ ]
+       └─── 46821 longHorMetric pairs (uint16 adv + int16 lsb = 4 B) ──┘└── 9 lsb-only (int16, 2 B) ──┘
+
+   advance(g) = pairs[g].adv          if g &lt; 46821   else   pairs[46820].adv
+   lsb(g)     = pairs[g].lsb          if g &lt; 46821   else   trailingLsb[g − 46821]</pre>
+  <p>这个布局和模块 1 查到的表长对得上：46821×4 + 9×2 = 187284 + 18 = <strong>187302</strong>
+  字节。前 16 个字节（四个 longHorMetric 对）：</p>
+<pre class="bytemap"><span class="b f0">03 e8 00 0f</span> <span class="b f1">01 f4 00 15</span> <span class="b f2">01 f4 00 15</span> <span class="b f3">01 f4 00 15</span></pre>
+  <table>
+    <tr><th class="mono">字节</th><th>gid</th><th>advance</th><th>lsb</th><th>字形</th></tr>
+    <tr><td class="mono">03 e8 00 0f</td><td>0</td><td class="mono">0x03e8 = 1000</td><td class="mono">0x000f = 15</td><td>.notdef（全角方框）</td></tr>
+    <tr><td class="mono">01 f4 00 15</td><td>1</td><td class="mono">0x01f4 = 500</td><td class="mono">0x0015 = 21</td><td>A</td></tr>
+    <tr><td class="mono">01 f4 00 15</td><td>2</td><td class="mono">500</td><td class="mono">21</td><td>Aacute</td></tr>
+    <tr><td class="mono">01 f4 00 15</td><td>3</td><td class="mono">500</td><td class="mono">21</td><td>Abreve</td></tr>
+  </table>
+  <p>要读某个特定字形，乘一下就到：<code>'一'</code> 的 gid 是 3171，远小于 46821，它的对就在
+  <code>504 + 3171×4 = 13188</code> → <code>(1000, 59)</code>。gid ≥ 46821 的字形则复用
+  <code>pairs[46820].adv</code>，lsb 从尾部区域里取。</p>
+
+  <div class="callout warn">
+    <span class="label">唯一的坑</span>
+    别闭着眼往 <code>numberOfHMetrics</code> 之后索引 <code>hmtx</code>：过了那个数就再没有
+    前进宽度了，只剩 lsb 值。越界的字形取<em>最后一个</em>前进宽度——正是第 3 步那条游程规则。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.6</span><span class="x-kind code">编程题</span></div>
+    <p><strong>手工解析 hmtx。</strong>不借助 <code>font['hmtx']</code>，直接读 <code>hmtx</code>
+    的原始字节，自己写出 <code>advance(gid)</code> / <code>lsb(gid)</code>，正确处理
+    longHorMetric 区和尾部 lsb 区两种情况。挑几个字形（如 gid 0、1、3171）
+    和 <code>font['hmtx']</code> 对一下。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      从 <code>hhea</code> 取 <code>numberOfHMetrics</code>，表偏移用
+      <code>font.reader.tables['hmtx'].offset</code>（或按模块 1 的解析办法自己定位）。一个对是
+      <code>"&gt;Hh"</code>（uint16 前进宽度，int16 lsb）。<code>gid &lt; numberOfHMetrics</code> 时读第
+      <code>gid</code> 个对；否则前进宽度取第 <code>numberOfHMetrics−1</code> 个对的，lsb 到紧跟在
+      对数组后面的那个 int16 数组里找。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      gid 0 → <code>(1000, 15)</code>（.notdef）；gid 1 → <code>(500, 21)</code>（'A'）；gid 3171 →
+      <code>(1000, 59)</code>（'一'）。全部与 <code>font['hmtx']</code> 一致。
+    </details>
+    <p class="check-note">上方可自查——也可以把你的解析器和结果贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <!-- ───────────────────────── TOOLING ───────────────────────── -->
+  <span class="section-tag tool">工具与探查</span>
+  <h2>自己动手探索度量</h2>
+  <table>
+    <tr><th class="mono">入口</th><th>得到什么</th></tr>
+    <tr><td class="mono">font['hmtx'][name]</td><td>单个字形的 <code>(advance, lsb)</code></td></tr>
+    <tr><td class="mono">font['hmtx'].metrics</td><td>整个 <code>{name: (advance, lsb)}</code> 字典</td></tr>
+    <tr><td class="mono">font['hhea'].ascent / .descent / .lineGap / .numberOfHMetrics</td><td>水平头部</td></tr>
+    <tr><td class="mono">font['OS/2'].sTypoAscender / …Descender / usWinAscent / usWinDescent / fsSelection</td><td>另外两套行度量 + USE_TYPO_METRICS 位</td></tr>
+    <tr><td class="mono">font['head'].unitsPerEm</td><td>em 大小</td></tr>
+    <tr><td class="mono">font['vhea'] / font['vmtx']</td><td>竖排度量（前进高度）</td></tr>
+  </table>
+  <p>想要<em>墨迹</em>盒（而不是前进宽度盒），把字形重放进一个
+  <code>BoundsPen</code>：<code>from fontTools.pens.boundsPen import BoundsPen</code> →
+  <code>pen.bounds</code> 给出实际轮廓的紧致 (xMin,yMin,xMax,yMax)。命令行下，
+  <code>ttx -t hmtx -t hhea -t OS/2 font.ttf</code> 会把这些全部导出成 XML。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">4.7</span><span class="x-kind code">编程题</span></div>
+    <p><strong>这两款字体能不重算度量就合并吗？</strong>假设要把教程的两款字体并成一个家族——
+    文楷当 Regular，臻楷当 Bold。把<em>两个</em>源字体都加载进来，各算一遍
+    <code>'一'</code> 的前进宽度 ÷ <code>unitsPerEm</code>。打印两个比值，确认它们相等（且为
+    1.0）——这是让臻楷不重算度量就顶上粗体位置的前提。加分项：对 <code>hhea</code> 和
+    <code>OS/2</code> 表 <code>dir()</code> 一下，找出两个你没用过的字段。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      写个接收路径的辅助函数会干净些：打开字体，<code>name = getBestCmap()[0x4E00]</code>，比值 =
+      <code>f['hmtx'][name][0] / f['head'].unitsPerEm</code>。如果你手头只有一款字体，就算出它的
+      比值，并说明两款相等<em>将会</em>证明什么。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      两个比值都是 <strong>1.0</strong>（两款字体的 '一' 都恰好前进一个 em），所以 regular→bold
+      的切换让每一列全角字保持原宽——没有任何前进宽度需要重算。这个相等，就是两款字体
+      不重算度量直接合并的全部依据。
+    </details>
+    <p class="check-note">上方可自查——也可以把两个比值贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="4">标记本模块完成</button>
+
+  <div class="pager">
+    <a class="prev" href="03-outlines.zh.html"><span class="dir">←</span><span class="ttl">03 · 轮廓</span></a>
+    <a class="next" href="05-families.zh.html"><span class="dir">下一模块 →</span><span class="ttl">05 · 身份与家族</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

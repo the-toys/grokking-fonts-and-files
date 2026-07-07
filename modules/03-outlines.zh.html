@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03 · 轮廓</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">模块 03</p>
+  <h1>轮廓</h1>
+  <p class="lede">字形就是一组<em>封闭路径</em>，由渲染器填充。我们按最自然的顺序层层递进：
+  <strong>形状存在哪里（glyf）</strong>、<strong>怎么找到某一个字形的数据（loca）</strong>、
+  两张表如何配合、<strong>解出来的数字是什么意思</strong>，
+  最后<strong>徒手解码原始字节</strong>。</p>
+  <p class="legend">练习<strong>穿插</strong>在正文里。概念题带答案；编程题带一个可折叠的
+  <strong>✓ 核对答案</strong>。</p>
+
+  <!-- ───────────────────────── 1. glyf ───────────────────────── -->
+  <span class="section-tag concept">概念 · 1</span>
+  <h2>glyf——形状存放的地方</h2>
+  <p><code>glyf</code> 表是一整块大数据，装着所有字形的轮廓，其中<strong>每个字形占一条变长记录</strong>，
+  前后紧挨着排。一条记录把字形描述成若干<strong>轮廓环</strong>——由点构成的封闭回路——外加一个包围盒。
+  渲染器<em>填充</em>这些回路围出的区域，而不是只描边。</p>
+  <p>这些点描出的是<em>哪种</em>曲线，由字体采用的技术路线决定，而技术路线由
+  <a href="01-sfnt-container.zh.html">模块 1</a> 里的 sfnt 魔数宣告：</p>
+  <ul>
+    <li><strong>TrueType</strong>（本字体，魔数 <code>00 01 00 00</code>）：轮廓放在
+      <code>glyf</code> 里，用<strong>二次</strong>曲线。（这是什么意思，第 4 步拆开讲。）</li>
+    <li><strong>CFF / CFF2</strong>（魔数 <code>OTTO</code>）：轮廓改放在 <code>CFF&nbsp;</code> 表里，
+      用<strong>三次</strong>曲线。压根没有 <code>glyf</code>。</li>
+  </ul>
+  <p>眼下只需记住一句：<strong><code>glyf</code> = 轮廓数据；每个字形一条紧密排列的
+  记录。</strong>下一个问题是，怎么在这 24.7 MB 的大块数据里找到<em>某一个</em>字形。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.1</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>轮廓放在哪？</strong>你手上这款字体的 sfnt 魔数是 <code>00 01 00 00</code>。它的轮廓在哪张
+    表里、用哪种曲线？换成魔数为 <code>OTTO</code> 的字体，
+    又会用哪张表、哪种曲线？</p>
+    <details><summary>看答案</summary>
+      <code>00 01 00 00</code> ⇒ TrueType ⇒ 轮廓在 <code>glyf</code> 里（经 <code>loca</code> 定位），
+      <strong>二次</strong>曲线。<code>OTTO</code> ⇒ 轮廓在 <code>CFF&nbsp;</code> 表里，
+      <strong>三次</strong>曲线，且没有 <code>glyf</code>/<code>loca</code>。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 2. loca ───────────────────────── -->
+  <span class="section-tag concept">概念 · 2</span>
+  <h2>loca——定位一个字形的字节</h2>
+  <p><code>glyf</code> 的记录是<strong>变长</strong>的（一个逗号只有几个点，一个汉字动辄几百个），
+  中间又没有分隔符，没有地图就没法直接跳到第 <em>i</em> 个字形。
+  这张地图就是 <code>loca</code>——一个指向 <code>glyf</code> 内部的字节<strong>偏移</strong>数组，
+  每个字形一项，<strong>再多一项</strong>——共 <code>numGlyphs&nbsp;+&nbsp;1</code> 项，其中
+  <code>numGlyphs</code> 是字体的字形总数（存在 <a href="01-sfnt-container.zh.html">模块 1</a> 讲过的
+  <code>maxp</code> 表里；本字体是 <strong>46830</strong>，模块 2 用过这个数）：</p>
+<pre>loca:   off0      off1          off2       off3   …   offN+1   (N+1 entries, N = numGlyphs)
+        │         │             │          │
+        ▼         ▼             ▼          ▼
+glyf:   ┌─────────┬─────────────┬──────────┬─ …              (variable-length records, packed)
+        │ glyph 0 │   glyph 1   │ glyph 2  │
+        └─────────┴─────────────┴──────────┴─ …
+
+        each loca[i] marks the START of glyph i, so   glyph i's bytes = glyf[ loca[i] : loca[i+1] ]</pre>
+  <p>有三条推论值得说破：</p>
+  <ul>
+    <li><strong>为什么是 N+1 项：</strong>字形 <em>i</em> 的范围从 <code>loca[i]</code> 到
+      <code>loca[i+1]</code>，所以最后一个字形也需要一个位于它<em>之后</em>的偏移来标记结尾。</li>
+    <li><strong>空字形：</strong>如果 <code>loca[i] == loca[i+1]</code>，这个字形就是零字节——
+      什么都不画（比如空格）。完全正常。</li>
+    <li><strong>两种存储格式：</strong>每项的宽度由一个字段决定，写作
+      <code>head.indexToLocFormat</code>（即“<code>head</code>
+      表的 <code>indexToLocFormat</code> 字段”）。<code>head</code> 是 OpenType 的<em>字体头部</em>表——一张经由
+      表目录找到的具名表，<a href="01-sfnt-container.zh.html">模块 1</a> 列过，不是文件 offset 0 处那 12 字节
+      的文件头。<strong>0</strong> = 16 位“短”偏移，存的是真实偏移 ÷ 2（省空间，
+      但最多只够到 128 KB 的 glyf）；<strong>1</strong> = 32 位“长”偏移，直接存原值。
+      本字体用 <strong>1</strong>（它的 glyf 有 24.7 MB——短偏移远远
+      够不着）。</li>
+  </ul>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.2</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>数一数 loca，再读一个间隙。</strong>本字体 <code>numGlyphs = 46830</code>。(a)
+    <code>loca</code> 一共有多少项？为什么多出一项？(b) 如果 <code>loca[40] == loca[41]</code>，
+    你能对字形 40 得出什么结论？</p>
+    <details><summary>看答案</summary>
+      (a) <strong>46831</strong>——字形 <em>i</em> 占 <code>loca[i]…loca[i+1]</code>，所以需要一个
+      越过最后一个字形（46829）的偏移来给它收尾。(b) 字形 40 是<strong>零字节</strong>——一个
+      什么都不画的空字形（比如空格）。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── 3. together ───────────────────────── -->
+  <span class="section-tag walk">解读 · 3</span>
+  <h2>glyf + loca 联手（以及我们的第一批真实坐标）</h2>
+  <p>两张表合起来就能取出一个字形。拿 '一'（U+4E00）来试。先码位 → 字形 ID（走模块 2 的
+  <code>cmap</code>），再字形 ID → 字节范围（走 <code>loca</code>）：</p>
+<pre><code>name  = getBestCmap()[0x4E00]   = "u4E00"
+gid   = getGlyphID(name)        = 3171
+loca[3171]   = 931382      ┐  glyph 3171's bytes are
+loca[3172]   = 931454      ┘  glyf[931382 : 931454]  →  72 bytes long</code></pre>
+  <p>这 72 个字节<em>就是</em>轮廓本身。fontTools 会把它们解码成一个干净的对象，让你先不碰字节
+  也能读出形状：</p>
+<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+font = TTFont(path)
+g = font[<span class="str">"glyf"</span>][<span class="str">"u4E00"</span>]
+g.numberOfContours      <span class="cmt"># 1   (&gt;0 simple glyph, -1 composite)</span>
+g.coordinates           <span class="cmt"># 21 ABSOLUTE (x,y) points: [(110,383), (837,420), …]</span>
+g.flags                 <span class="cmt"># parallel bytes; bit0 (&amp; 1) = on-curve</span>
+g.endPtsOfContours      <span class="cmt"># [20]  last point index of each contour</span></code></pre>
+  <p>所以字形 '一' 是 <strong>1 条轮廓环、21 个点</strong>，头几个坐标是
+  <code>(110,383) (837,420) (861,422) (881,430) …</code>。这些裸数字什么意思，第 4 步来解。
+  （而且没错——这跟表目录在整个文件层面做的导航一模一样，只是下沉了
+  一层：一个偏移索引，指向一块紧密排列的数据。）</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.3</span><span class="x-kind code">编程题</span></div>
+    <p><strong>用 loca 量一个字形。</strong>找出 '一'（U+4E00）的字形 ID，读出
+    <code>loca</code>，按 <code>loca[gid+1] − loca[gid]</code> 算出该字形的字节长度。打印
+    gid、两个偏移和长度。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      <code>font.getGlyphID("u4E00")</code> 给出 gid；<code>font["loca"]</code> 可以像列表一样
+      按下标取字节偏移（共 numGlyphs+1 项）。长度 = 相邻两项之差。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      gid <strong>3171</strong>；<code>loca[3171]=931382</code>，<code>loca[3172]=931454</code>；长度
+      <strong>72</strong> 字节。
+    </details>
+    <p class="check-note">可按上面自查——或把这几个数字贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <!-- ───────────────────────── 4. what the coords mean ───────────────────────── -->
+  <span class="section-tag concept">概念 · 4</span>
+  <h2>每个坐标是什么意思</h2>
+  <p>现在到收获的时候了。我们手里有一串 <code>(110, 383)</code> 这样的点，每个点带一个 flag。要解码
+  两件事：点在<em>哪里</em>，以及它扮演<em>什么角色</em>。</p>
+
+  <h3>哪里：字体单位，从基线量起</h3>
+  <p>坐标以<strong>字体单位</strong>计：<strong>x 向右</strong>，从原点（左
+  缘）起；<strong>y 向上</strong>，从<strong>基线</strong>起——基线是文字坐在其上的那条线，位于
+  <code>y = 0</code>。<code>unitsPerEm = 1000</code> 是<em>刻度</em>（1 em = 1000 单位），所以
+  <code>(110, 383)</code> 就是向右 110 单位、基线上方 383 单位。</p>
+  <div class="callout key">
+    <span class="label">坐标带符号——也不被框死在 [0, 1000] 里</span>
+    基线<em>不是</em>字形的底边，而是书写线。基线<strong>以下</strong>
+    的部分 <strong>y 为负</strong>——拉丁字母的降部（<code>'g'</code> → <code>−175</code>，
+    还有 <code>'p'</code>、<code>'y'</code>、<code>'j'</code>），以及向下探的汉字笔画
+    （<code>'十'</code> 的竖笔伸到 <code>y = −86</code>）。墨迹也可以落在原点左侧
+    （x 为负），或伸出 em 之外。<strong>1000 是一把尺子，不是包围盒</strong>——字形
+    并不被关在里面。（所以 <code>g.coordinates</code> 里出现 <code>(537, −59)</code> 时，那不过是
+    “x 537，基线下方 59 单位”。）
+  </div>
+  <p>单位怎么缩放成像素，是<a href="04-metrics.zh.html">模块 4</a> 的全部内容；眼下只需把每个点
+  读作这把以基线为参照的尺子上的一个位置。</p>
+
+  <h3>角色：曲线上点与曲线外点——顺带说清贝塞尔曲线是什么</h3>
+  <p>每个点 flag 的第 0 位标记它是<strong>曲线上点</strong>还是<strong>曲线外点</strong>。要明白这
+  为什么重要，先看藏在底下的那一个想法：从 <strong>A</strong> 到
+  <strong>B</strong> 画一条直线，然后在旁边放下第三个点 <strong>C</strong>，把它当
+  <em>磁铁</em>——让线段朝 C 鼓起来，但仍从 A 出发、到 B 结束、永远
+  碰不到 C。这条被掰弯的线，就是<strong>二次贝塞尔曲线</strong>。</p>
+<pre>          C ●   ← off-curve "control" (the magnet: curve leans toward it, never touches)
+         ·     ·
+       ·         ·          ← the actual curve
+  A ●·             ·● B
+  on-curve          on-curve   (the curve DOES pass through A and B)</pre>
+  <ul>
+    <li><strong>曲线上点</strong>（A、B）——路径<em>穿过</em>它们；也叫
+      <strong>锚点</strong>（轮廓被钉在这些点上）。</li>
+    <li><strong>曲线外点</strong>（C）——路径只是<em>朝它偏</em>；也叫
+      <strong>控制点</strong>。C 离得远 → 鼓得大；C 落在 A–B 连线上 → 就是直线。</li>
+  </ul>
+  <p><strong>二次与三次之别 = 每段几块磁铁：</strong>二次曲线<strong>一个</strong>
+  控制点（TrueType）；三次曲线<strong>两个</strong>，两端各一（CFF），一段之内就够画出 S 形。
+  二次曲线一段画不出 S，所以 TrueType 要串好几段——同一个形状，TrueType
+  字形的点数比 CFF 多，原因就在这。</p>
+
+  <h3>读一串 flag</h3>
+  <p>一条轮廓环就是这些点连成的回路。曲线上/外的 flag 告诉你各段是什么：</p>
+  <ul>
+    <li><code>1 1</code>——两个锚点相邻，中间没有磁铁 ⇒ 一条<strong>直边</strong>。</li>
+    <li><code>1 0 1</code>——锚点、控制点、锚点 ⇒ <strong>一段曲线</strong>。</li>
+    <li><code>… 0 0 …</code>——两个曲线外点相邻 ⇒ TrueType <strong>在它们的中点隐含一个
+      曲线上点</strong>，于是一串控制点连成一条平滑的弧链。</li>
+  </ul>
+  <p>于是 '一' 的前六个 flag <code>1 1 0 0 0 0</code> 读作：锚点、锚点（顶部那条直边），
+  然后连续四个控制点（右端的圆头），控制点之间夹着隐含的中点。下面把它
+  原原本本画在 em 方格上：</p>
+
+  <figure>
+    <img src="../specimens/yi-first6-points.png"
+         alt="U+4E00 的前六个点画在 em 方格上，锚点与控制点用颜色区分">
+    <figcaption><strong>'一'，前六个点</strong>（x 向右，y 向上）。蓝色圆点 = 曲线上
+    锚点（0、1）；红色方块 = 曲线外控制点（2–5）。<em>左：</em>完整的 em 方格——锚点 0
+    在最左边，其余点挤在笔画右端。<em>右：</em>放大图，可见曲线朝控制点
+    弯过去却不碰到它们，在隐含的曲线上中点（灰色）处衔接。</figcaption>
+  </figure>
+
+  <h3>轮廓环、洞与环绕方向</h3>
+  <p>一个字形是一条或多条<strong>封闭回路</strong>（轮廓环），渲染器填充它们的内部。
+  唯一的麻烦在回路嵌套时——<strong>'O'</strong> 的碗、
+  <strong>'口'</strong> 的框——渲染器得判断被围住的区域是墨迹还是<em>洞</em>。一条
+  规则包办所有情形。</p>
+
+  <h4>规则本身</h4>
+  <p>从待测的点向无穷远射一条射线，数它穿过多少条轮廓边——
+  但要带<strong>符号</strong>：按边穿过射线的<em>方向</em>，每次相交记 <strong>+1</strong> 或
+  <strong>−1</strong>（一个方向 +1，反方向 −1——哪边算哪边只是
+  固定约定）。<strong>带符号的总和不为零，点就在内部</strong>；为零则在
+  外部。这就是<strong>非零环绕规则</strong>。<em>（它有个更简单的表亲——奇偶规则：
+  丢掉符号，交点数为奇则填充；TrueType 用非零规则。）</em></p>
+
+  <h4>为什么嵌套会产生洞</h4>
+  <p>全部窍门就一个事实：<strong>内环画的方向与外环
+  相反。</strong>从每类点各射一条射线出去看看：</p>
+  <ul>
+    <li><strong>在实心环带里</strong>（外环与内环之间）：射线只穿过外环的边——
+      <strong>一次</strong>相交，总和不可能为零 ⇒ <strong>填充</strong>。（它的符号听约定的
+      ——这里是 <code>−1</code>，因为外环顺时针——但要紧的只有
+      <em>零与非零</em>，符号本身从来无关。）</li>
+    <li><strong>在被围住的区域里</strong>：射线穿过内环的边<em>又</em>穿过外环的边，而
+      两环走向<em>相反</em>，两次相交<strong>符号相反、彼此
+      抵消</strong>（<code>+1</code> 加 <code>−1</code> → <code>0</code>）⇒ <strong>空白——一个洞</strong>。</li>
+    <li><strong>在一切之外</strong>：没有相交 ⇒ <code>0</code> ⇒ 空白。</li>
+  </ul>
+  <div class="callout key">
+    <span class="label">挖洞靠的是反向环绕，不是嵌套本身</span>
+    把内环改成与外环<em>同</em>向来画，两次相交就取<em>相同</em>
+    符号——它们<strong>相加</strong>而非抵消（得 <code>±2</code>，永远不为零）——那个“洞”
+    就被填实了。开洞靠的是方向；一条回路仅仅呆在另一条里面，还不够。</div>
+  <p>所以多条轮廓环并<em>不</em>意味着有洞：<strong>'永'</strong> 是三笔，走向全部
+  相同——三块彼此独立的实心墨迹，零个洞。而拉丁 <strong>'O'</strong> 恰恰就是
+  <strong>'口'</strong> 那幅图：一条外环，加一条反向的内环。真实例子如下：</p>
+
+  <figure>
+    <img src="../specimens/winding.png"
+         alt="永 口 日 回 四个字形，标出各轮廓环的环绕方向，另附射线法环绕数示意图">
+    <figcaption>箭头标出每条轮廓环的方向；蓝色 = 一个方向（增加填充），红色 = 反方向（可以
+    挖洞）。<strong>'永'：</strong>3 条同向笔画，互不嵌套 ⇒ <strong>没有洞</strong>。
+    <strong>'口'：</strong>外环 + 1 条反向内环 ⇒ 1 个洞。<strong>'日'：</strong>外环 + 2 条内环
+    ⇒ 2 个洞。<strong>'回'：</strong>四层嵌套的环，方向逐层交替 ⇒ 2 个洞。
+    <strong>底部：</strong>从洞中点 <em>P</em> 射出的射线穿过内环边（+1）和
+    外环边（−1）→ 0 → 空白。</figcaption>
+  </figure>
+  <h4>为什么射线朝哪射都无所谓</h4>
+  <p>这套做法理应让你起疑：要是我把射线朝<em>上</em>射而不是朝
+  <em>右</em>射，答案还一样吗？<strong>一样——永远一样</strong>，而看懂<em>为什么</em>正是
+  整条规则的心脏，所以我们仔细说。</p>
+  <p>先把射线忘掉。站在待测点 <em>P</em>，看一支笔把整条轮廓环
+  描一圈。只盯住<strong>从 <em>P</em> 指向笔尖的方向</strong>——一个
+  随笔移动而摆动的角度。笔回到起点时，这个角度也回到原处，但一路上它
+  可能已绕着 <em>P</em> 转了整数个整圈。这个整数——逆时针圈数
+  减顺时针圈数——就是 <em>P</em> 的<strong>环绕数</strong>。把这个
+  定义再读一遍：<strong>里面根本没提射线。</strong>它只取决于 <em>P</em> 和曲线本身。</p>
+  <p>射线法不过是<em>数</em>这些圈数的一种手段。轮廓每穿过你的射线一次，
+  笔的方向就正扫过射线所在的那一个固定角度——要么沿 +圈方向（记 <code>+1</code>），
+  要么沿 −圈方向（记 <code>−1</code>）。整圈描完，带符号的相交数加起来恰好是净
+  圈数——环绕数。既然这个数的定义里没有射线，<strong>任何方向的任何
+  射线都必须报出同一个总数。</strong>射线只是数圈用的刻度线；刻度放在
+  哪，改变不了笔实际转了几圈。</p>
+
+  <div class="callout key">
+    <span class="label">同一个事实，换成抵消的看法</span>
+    不用角度论证也能看到它。把射线从一个方向慢慢转向另一个方向。
+    带符号的相交数只可能在射线<strong>相切</strong>擦过曲线的那一瞬间变化
+    ——而在那里，两个交点总是<strong>成对出现（或成对消失），且符号相反</strong>：
+    射线探进边界又退出来，一个 <code>+1</code> 一个 <code>−1</code>，正好抵消。于是
+    射线转动时带符号的总和纹丝不动 ⇒ 所有方向一致。（奇偶规则也因同一个理由
+    成立：交点仍然<em>成对</em>出现和消失，所以计数的<em>奇偶性</em>同样
+    不会变。）
+  </div>
+  <p class="legend">老实交代一个前提：射线要选<strong>一般位置</strong>——不能正好
+  穿过某个列出的点，也不能沿着某条边走。这类退化方向只有有限多个；真实
+  的栅格化器用固定的裁决规则绕开它们（比如“一条边只在它的下端点计一次”），保证
+  边界像素既不被数两次也不被漏掉。</p>
+
+  <h4>渲染器实际怎么填充</h4>
+  <p>逐点射线是“内部”的<em>定义</em>，不是<em>算法</em>——没有哪个栅格化器
+  给每个像素单独射线。它按行工作（<strong>扫描线转换</strong>）：</p>
+  <ol class="steps">
+    <li>在一行像素上取一条水平<strong>扫描线</strong>（过该行中心）。</li>
+    <li>找出轮廓边与它相交的位置——只要 x 坐标，每个交点按方向标上 <code>+1</code>/<code>−1</code>。</li>
+    <li>把这些 x 排序，从左到右扫过去，维护一个<strong>环绕数累计和</strong>；它只在
+      交点处变化，累计和非零的区段全部填充。</li>
+  </ol>
+  <p>一条扫描线一次答完一整行——“射线”<em>就是</em>这条扫描线，被该行所有像素
+  复用，而不是每个点重射一次。</p>
+  <p>那些别扭的情形（扫描线擦过顶点，或恰好压在水平边上）不是靠转动射线
+  解决的——而是靠一条固定的<strong>裁决规则</strong>：把每条边在 y 方向当作半开
+  区间（在<em>下</em>端点计数，上端点不计），并忽略严格水平的边。这样
+  每个共享顶点恰好被数一次，相邻区段干净地共享边界——不重画、
+  没有一像素宽的裂缝。（这跟 GPU 画三角形用的“top-left 规则”是同一回事，而它站得住脚正因为
+  <em>任何</em>射线方向都给出一致答案——我们刚证过。）</p>
+  <p>在此之上还叠着两层。<strong>抗锯齿：</strong>好的栅格化器不做非黑即白的内外判断，而是
+  计算每个像素的分数<em>覆盖率</em>（轮廓盖住了它多大一块）——靠子采样，或
+  按像素格累计精确的带符号面积（FreeType 的“smooth”栅格化器）——环绕逻辑不变，
+  只是从是/否改成量面积。<strong>Hinting（渲染微调）：</strong>小字号下，
+  <code>prep</code>/<code>fpgm</code>/<code>gasp</code> 这套机制会在填充<em>之前</em>把轮廓对齐到像素
+  网格上，让笔画保持锐利。</p>
+
+  <h4>细则：方向、角色与定向</h4>
+  <p><strong>方向不等于角色。</strong>一条轮廓环的<em>方向</em>（顺时针/逆时针，
+  按 y 向上判断）恰好是其<strong>带符号（鞋带公式）面积</strong>的正负——可以逐环
+  检验。但它到底是<em>外</em>边界、<em>洞</em>，还是洞里的实心<em>岛</em>，是一个
+  <strong>包含关系</strong>问题，符号给不了答案。本字体遵循的约定
+  （TrueType；PostScript/CFF 正相反）：最外层轮廓环顺时针，<strong>每嵌套一层，
+  环绕方向翻转一次</strong>（CW、CCW、CW……），实心与空心由外向内交替。“外环 CW、洞
+  CCW”只是两层的特例——<strong>'回'</strong> 嵌套四层，它的第三条环虽是顺时针，
+  却是内环，<em>不是</em>最外层。</p>
+  <p><strong>“顺时针”什么时候才有定义？</strong>沿一条永不自交的回路走一圈，你面朝的
+  方向恰好转过一整圈——<code>+360°</code>（CCW）或 <code>−360°</code>（CW）；
+  这个正负号就是定向，带符号面积能把它算出来。路径一旦
+  <strong>自交</strong>（8 字形的两个环各转一个方向；对称的 8 字带符号面积
+  干脆等于 <code>0</code>），或者<strong>退化</strong>成零面积，定向就没了定义。干净的字形里两种情况
+  都不会出现——况且栅格化器根本不需要全局标签，因为环绕数
+  是由局部相交逐点定义的。</p>
+
+  <p>同样的结构也出现在拉丁字母里——<strong>'O'</strong> 就是 '口' 那幅图——下面把它和
+  前面见过的简单字形放在一起：</p>
+  <figure>
+    <img src="../specimens/glyph-points-gallery.png"
+         alt="四个字形，em 方格上标出曲线上锚点与曲线外控制点">
+    <figcaption><strong>'─'</strong>：四个曲线上角点，零控制点——纯多边形。
+    <strong>'one'（一）</strong>/<strong>'ten'（十）</strong>：锚点在端头和拐角，控制点
+    挤在圆润的笔锋处。<strong>'O'</strong>：锚点在四个极值点，控制点塑出
+    曲线，另有一条反向环绕的<em>内</em>环挖出字腔——它算作洞，
+    只因为非零环绕规则把它算成洞。曲线永远来自曲线外点；直
+    边一个控制点也没有。</figcaption>
+  </figure>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.4</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>给点分类。</strong>'一' 的前六个点 flag 为 <code>1 1 0 0 0 0</code>，
+    坐标为 <code>(110,383) (837,420) (861,422) (881,430) (893,430) (921,413)</code>。把点
+    0–5 标为锚点或控制点，并给出点 2 与点 3 之间隐含的曲线上点。</p>
+    <details><summary>看答案</summary>
+      0、1 = 锚点；2–5 = 控制点。点 2 和点 3 是相邻的曲线外点，所以隐含的
+      曲线上中点是 <code>((861+881)/2, (422+430)/2) = (871, 426)</code>；曲线穿过
+      它，把 2→3 拆成两段二次曲线。
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.5</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>为什么随便哪条射线都行。</strong>(a) 用一句话说明：为什么朝<em>任意</em>
+    方向射线，对点 P 的内外判断都一样？(b) 射线必须满足的唯一条件是什么？不满足会
+    出什么岔子？</p>
+    <details><summary>看答案</summary>
+      (a) 两条理由任选。<strong>干净的一条：</strong>带符号的相交数<em>就是</em> P 的
+      <strong>环绕数</strong>——描完一圈轮廓时，从 P 指向动点的方向净转过的
+      整圈数——这个量的<strong>定义里没有射线</strong>，自然不依赖你朝哪
+      射。<strong>动手的一条：</strong>缓缓转动射线，交点只会以互相抵消的 <code>+1/−1</code>
+      对出现或消失，总和从不改变。(b) 射线必须处于<strong>一般位置</strong>：不能
+      正好穿过轮廓点，也不能沿边而行——否则一次相交就模棱两可
+      （数成零次、一次还是两次都说得通），栅格化器用固定的裁决规则避开这一点。
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.6</span><span class="x-kind code">编程题</span></div>
+    <p><strong>取出点，再画出来。</strong>加载一个字形（试试 <code>'u5341'</code>，即 '十'），
+    然后 (a) 打印它的 <code>numberOfContours</code>、总点数、曲线上/曲线外点各多少；(b)
+    把它画出来——要么通过 fontTools 的 pen 重放，要么用 matplotlib 散点画 <code>g.coordinates</code>，
+    按 <code>flag &amp; 1</code> 给曲线上/曲线外点分别着色。跟上面的
+    图集对照一眼。</p>
+    <p><em>画图前你得知道真实范围：</em><code>'十'</code> 并<strong>不</strong>
+    框在 [0, 1000] 里——它的包围盒是 <code>x 73…939</code>、<strong><code>y −86…800</code></strong>，
+    竖笔从 <code>y 800</code> 一路向下<em>穿过</em>基线落到
+    <code>y −86</code>（基线之下）。把 <code>y = 0</code> 的基线画出来，让基线下的笔尾
+    看得见；坐标轴范围按包围盒设，别从 <code>0</code> 起。</p>
+    <p>以上是<em>单个</em>字形的孤立画法。把字形排成一<em>行</em>是另一回事：行高不是
+    按每个字形单独定的——而是从<em>字体</em>的度量里预留一个<strong>固定的竖直盒子</strong>（基线
+    上方一段<em>升距</em>、下方一段<em>降距</em>），每一行都
+    相同，偶尔特别深或特别高的字形溢出去就随它去。这些行度量
+    在<a href="04-metrics.zh.html">模块 4</a>。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      <code>g = font['glyf']['u5341']</code> 暴露的成员和第 3 步的代码片段相同：
+      <code>g.numberOfContours</code>、<code>g.coordinates</code> 和 <code>g.flags</code>（第 0 位 =
+      曲线上点）；总点数是 <code>len(g.coordinates)</code>。要填充渲染，
+      用 <code>font.getGlyphSet()['u5341'].draw(pen)</code> 配一支 pen 重放
+      <code>moveTo/lineTo/qCurveTo/closePath</code>；要快速散点，直接把坐标用
+      两种颜色画出来。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      '十'：<code>numberOfContours = 1</code>，<strong>46</strong> 个点，<strong>曲线上 22 个</strong>、
+      <strong>曲线外 24 个</strong>——一个十字，锚点在拐角，控制点在圆头处。
+    </details>
+    <p class="check-note">可按上面自查——或把点数统计和渲染图贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <!-- ───────────────────────── 5. hand-parse ───────────────────────── -->
+  <span class="section-tag binary">二进制细读 · 5</span>
+  <h2>徒手解析一个字形的字节</h2>
+  <p>库我们用过了；现在自己解码原始字节。'一' 有 21 个点（手算太
+  多），所以换用最小却五脏俱全的真实字形：<strong>'─'（U+2500）</strong>，
+  一个只有 4 个点的矩形。先导航到它的字节（表偏移来自模块 1：
+  <code>glyf @ 592352</code>，<code>loca @ 405028</code>）：</p>
+<pre><code>name         = getBestCmap()[0x2500]   = "boxdrawingslighthorizontal"   (not "u2500"!)
+gid          = getGlyphID(name)        = 869
+loca[869]    = 153477                   ┐ length = 153501 − 153477 = 24 bytes
+loca[870]    = 153501                   ┘ file offset = 592352 + 153477 = 745829</code></pre>
+  <p class="legend">注意字形名并不固定——要经 cmap 解析（<code>getBestCmap()[0x2500]</code>），
+  别想当然以为是 "u2500"。'一' 恰好叫 "u4E00"，但这个模式没有保证。</p>
+
+  <div class="callout key">
+    <span class="label">怎么真正靠 loca 抓到字节</span>
+    <code>loca</code> 是一个含 <strong>N+1</strong> 个偏移的数组（末尾多一个哨兵）。字形
+    <code>gid</code> 的数据是半开区间 <code>[loca[gid], loca[gid+1])</code>——要读该字形
+    自己的偏移<em>和下一个偏移</em>，两者之差就是长度。末尾那个
+    哨兵正是数组比字形数多一项的原因：最后一个字形也需要一个
+    <code>gid+1</code> 来收尾。有三件事必须做对：
+    <br><br>
+    <strong>(1) loca 的偏移相对于 glyf 表，不相对于文件。</strong>在原始文件里 seek 时要加上
+    <code>glyf</code> 表自身的偏移（来自模块 1 的表目录）：
+    <code>file_off = glyf_offset + loca[gid]</code>。
+    <br>
+    <strong>(2) loca 的短格式与长格式</strong>（<code>head.indexToLocFormat</code>）：<code>0</code> =
+    短格式，每个偏移是一个 <code>uint16</code>，存的是<em>偏移 ÷ 2</em>（用时乘 2，字形按
+    2 字节对齐）；<code>1</code> = 长格式，每个是 <code>uint32</code> 字节偏移，直接用。本字体
+    是<strong>长格式</strong>。fontTools 的 <code>font['loca'].locations</code> 两种格式都直接给你解码好的
+    字节偏移——那个 ÷2 只在你亲手解析 loca 字节时才会咬人。
+    <br>
+    <strong>(3) 长度为零 ⇒ 没有轮廓。</strong>如果 <code>loca[gid] == loca[gid+1]</code>，这个字形
+    <em>完全没有 glyf 数据</em>——比如 <code>space</code> 这样的空白字形。什么都别读；别去解析头部。
+  </div>
+<pre><code><span class="kw">import</span> struct
+glyf_off   = font.reader.tables[<span class="str">'glyf'</span>].offset    <span class="cmt"># 592352, from the sfnt directory</span>
+loca       = font[<span class="str">'loca'</span>].locations           <span class="cmt"># decoded offsets, len = numGlyphs + 1</span>
+gid        = <span class="num">869</span>
+start, end = loca[gid], loca[gid+<span class="num">1</span>]            <span class="cmt"># 153477, 153501</span>
+length     = end - start                     <span class="cmt"># 24   (0 ⇒ blank glyph, stop here)</span>
+<span class="kw">with</span> <span class="kw">open</span>(path, <span class="str">"rb"</span>) <span class="kw">as</span> fh:
+    fh.seek(glyf_off + start)                <span class="cmt"># 745829</span>
+    raw = fh.read(length)
+<span class="cmt"># raw = 00 01 00 00 01 68 03 e8 01 90 00 03 00 00 11 35 21 15 03 e8 01 68 28 28</span></code></pre>
+  <p>这 24 个原始字节：</p>
+<pre class="bytemap"><span class="b f0">00 01</span> <span class="b f1">00 00 01 68 03 e8 01 90</span> <span class="b f2">00 03</span> <span class="b f3">00 00</span> <span class="b f4">11 35 21 15</span> <span class="b f0">03 e8 01 68 28 28</span></pre>
+  <p class="legend"><span class="b f0">numberOfContours</span> · <span class="b f1">包围盒</span> ·
+  <span class="b f2">endPtsOfContours</span> · <span class="b f3">instructionLength</span> ·
+  <span class="b f4">flags</span> · <span class="b f0">坐标</span></p>
+
+  <h3>字形头部</h3>
+  <table>
+    <tr><th class="mono">字节</th><th>字段</th><th>值</th><th>含义</th></tr>
+    <tr><td class="mono">00 01</td><td>numberOfContours</td><td class="mono">1</td><td>≥0 ⇒ 简单字形（−1 ⇒ 复合字形）</td></tr>
+    <tr><td class="mono">00 00 01 68 03 e8 01 90</td><td>xMin yMin xMax yMax</td><td class="mono">0, 360, 1000, 400</td><td>包围盒（每项 int16）</td></tr>
+    <tr><td class="mono">00 03</td><td>endPtsOfContours[0]</td><td class="mono">3</td><td>轮廓环终于点 3 ⇒ <strong>4 个点</strong></td></tr>
+    <tr><td class="mono">00 00</td><td>instructionLength</td><td class="mono">0</td><td>没有 hinting 字节码</td></tr>
+  </table>
+  <p>'─' 是最省事的情形——一条轮廓环，没有 hinting。通用的简单字形布局里，上面那两行
+  其实各藏着一个<strong>变长</strong>字段：</p>
+<pre><code>numberOfContours   int16                       <span class="cmt"># n; ≥0 here, −1 ⇒ composite</span>
+xMin yMin xMax yMax 4 × int16                   <span class="cmt"># bounding box</span>
+endPtsOfContours   <b>n</b> × uint16                   <span class="cmt"># one per contour ⇒ 2·n bytes</span>
+instructionLength  uint16                       <span class="cmt"># m</span>
+instructions       <b>m</b> bytes                      <span class="cmt"># hinting bytecode (skip for outlines)</span>
+flags              one byte/point, REPEAT-packed
+xCoordinates       deltas (all x first)
+yCoordinates       deltas (then all y)</code></pre>
+  <div class="callout key">
+    <span class="label">两个不定宽的字段</span>
+    <strong>(1) endPtsOfContours 是 <code>n</code> 个 uint16，共 2·n 字节</strong>——'─' 只有一条轮廓环
+    （2 字节），而像本字体 <code>.notdef</code> 那样的 5 环字形带的是
+    <code>00 21 00 46 00 93 00 c9 00 d1</code> = <code>(33, 70, 147, 201, 209)</code>，十个字节。每个值
+    是该环<em>最后一个</em>点的索引（累计值，不是数量）：环 0 是点 0–33，
+    环 1 是点 34–70，依此类推。关键在于，<strong>最后一项 + 1 就是总点数</strong>
+    （209 + 1 = 210）——读 flags 之前必须先拿到这个数，因为每个点
+    一个 flag。
+    <br><br>
+    <strong>(2) instructionLength 后面跟着同样多字节的 hinting。</strong>如果 <code>instructionLength = m</code>
+    不为零，恰好 <code>m</code> 字节的 TrueType hinting 字节码就<em>夹在</em>
+    instructionLength 和 flags 之间。它们在特定渲染字号下把点往像素网格上推——
+    并<em>不</em>改变存储的轮廓，所以徒手解析时直接<strong>跳过
+    <code>m</code> 字节</strong>去读 flags 就行。（<em>本</em>字体的每个字形都是
+    <code>instructionLength = 0</code>——大型中文字体常见如此：与其给几万个字形逐个手工
+    hint，不如交给渲染器的自动 hinter——这就是 '─' 显示
+    <code>00 00</code>、flags 紧随其后的原因。）
+  </div>
+
+  <h3>flags 与增量编码的坐标</h3>
+  <p>头部之后是 flags（每点一个，可按行程压缩），然后是坐标。flag
+  字节是一个位域。x 增量由<strong>一对</strong>位（第 1、4 位）控制；y 增量由镜像
+  的一对（第 2、5 位）控制：</p>
+  <table class="mono">
+    <tr><th>位</th><th>掩码</th><th>名称</th><th>含义</th></tr>
+    <tr><td>0</td><td>0x01</td><td>ON_CURVE</td><td>1 = 曲线上锚点，0 = 曲线外控制点</td></tr>
+    <tr><td>1</td><td>0x02</td><td>X_SHORT</td><td>1 ⇒ x 增量占 1 字节；0 ⇒ 占 0 或 2 字节</td></tr>
+    <tr><td>2</td><td>0x04</td><td>Y_SHORT</td><td>同上，作用于 y</td></tr>
+    <tr><td>3</td><td>0x08</td><td>REPEAT</td><td>下一个字节 = 再有多少个点重复这个 flag</td></tr>
+    <tr><td>4</td><td>0x10</td><td>X_SAME_OR_SIGN</td><td>含义取决于 X_SHORT——见下面的 2×2 表</td></tr>
+    <tr><td>5</td><td>0x20</td><td>Y_SAME_OR_SIGN</td><td>同上，作用于 y</td></tr>
+  </table>
+  <div class="callout key">
+    <span class="label">每点一整个字节，不是 6 个位</span>
+    每个 flag 都是<strong>完整的一字节</strong>。上面只定义了第 0–5 位（第 6–7 位保留），
+    但解析器仍然<strong>每个点读满一字节</strong>——flags 按字节对齐，绝不
+    跨点打包位流，所以不存在“剥完 6 位再跨进下一个字节”的情况。（正是
+    这种字节对齐让 REPEAT 得以成立：它复制的是一整个相同的 flag 字节。）
+    <br><br>
+    一个字节之内，“<strong>第 N 位</strong>”指权值为 2<sup>N</sup> 的那一位，从
+    <strong>最低有效</strong>端数起：第 0 位 = <code>0x01</code> 是 LSB，第 5 位 = <code>0x20</code>。
+    用 <code>flag &amp; mask</code> 测试某一位。从 LSB 往上剥 <code>0x35 = 0011&nbsp;0101</code>：
+    第 <strong>0、2、4、5</strong> 位置位（即 ON_CURVE、Y_SHORT、X_SAME_OR_SIGN、Y_SAME_OR_SIGN——
+    注意 <code>0x35 &amp; 0x02 = 0</code>，X_SHORT <em>没有</em>置位）。
+  </div>
+  <p>第 4 位最容易让人栽跟头：<strong>它有两个互不相干的含义，用哪个由第 1 位（X_SHORT）
+  决定。</strong>规范里的名字把两半都写全了——
+  <code>X_IS_SAME_OR_POSITIVE_X_SHORT_VECTOR</code>：当增量<em>是</em>短格式时，第 4 位是它的
+  <em>符号</em>；当<em>不是</em>时，第 4 位表示“与前一点<em>相同</em>”（增量为零）。
+  于是这两个 x 位合起来，恰好从四种情形里选定一种：</p>
+  <table class="mono">
+    <tr><th>第 1 位（X_SHORT）</th><th>第 4 位</th><th>读取字节数</th><th>x 增量</th></tr>
+    <tr><td>1</td><td>1</td><td>1</td><td><strong>+</strong>（该字节，0–255）</td></tr>
+    <tr><td>1</td><td>0</td><td>1</td><td><strong>−</strong>（该字节，0–255）</td></tr>
+    <tr><td>0</td><td>1</td><td>0</td><td><strong>0</strong>——与前一点相同</td></tr>
+    <tr><td>0</td><td>0</td><td>2</td><td>带符号 <strong>int16</strong></td></tr>
+  </table>
+  <p>（短格式是一个<em>无符号</em>字节，符号由第 4 位补上——1 个字节因此仍能覆盖
+  ±255。y 增量的规则一模一样，用第 2、5 位。）</p>
+  <p>我们的四个 flag 字节 <code>11 35 21 15</code>（没有 REPEAT 位，一点一个）：四个的第 0 位
+  都置位 ⇒ <strong>全是曲线上点</strong>。后面的坐标字节怎么读，还有两条规则管着：</p>
+  <div class="callout key">
+    <span class="label">读坐标流的两条规则</span>
+    <strong>(1) 增量（累加）：</strong>每个存储值都是相对前一
+    点的<em>步长</em>，所以点的绝对坐标是<strong>累计和</strong>——从 <code>0</code> 起
+    （第一步从原点量起），逐个把增量加上去；x 和 y 各自独立
+    累加。<strong>(2) 先全部 x，再全部 y：</strong>所有 x 增量在前，所有 y 增量在后
+    ——不交错。<em>每个增量占多宽</em>（0、1 或 2 字节）、<em>符号是什么</em>，直接
+    查上面那张 2×2 表。
+  </div>
+  <p>现在解码末尾 6 个字节 <code>03 e8 01 68 28 28</code>。分两趟——先读完所有 x
+  增量，再读所有 y 增量——让一个<em>游标</em>在字节间走，每步恰好吃掉
+  flag 规定的宽度。<strong>第 1 步：从四个 flag 读出每个点 x、y 各占多宽</strong>
+  （查 2×2 表）：</p>
+<pre><code>flag   binary      x: bit1 bit4 → width   y: bit2 bit5 → width
+pt0 11 0001 0001    0    1   → 0 (same)     0    0   → 2 (int16)
+pt1 35 0011 0101    0    1   → 0 (same)     1    1   → 1 (+short)
+pt2 21 0010 0001    0    0   → 2 (int16)    0    1   → 0 (same)
+pt3 15 0001 0101    0    1   → 0 (same)     1    0   → 1 (−short)
+                    ───────────────────     ───────────────────
+                    x stream = 2 bytes      y stream = 4 bytes     → 6 total ✓</code></pre>
+  <p><strong>第 2 步：走游标。</strong>x 趟先吃掉自己的 2 个字节，y 趟再吃剩下
+  的 4 个——“先全部 x 再全部 y”落到实处就是这样：</p>
+<pre><code>bytes:  03 e8 01 68 28 28
+        └─x──┘└────y─────┘
+
+X pass (consume 2 bytes):
+  pt0  width 0  →  Δx = 0                          cursor ▸ 03 e8 01 68 28 28
+  pt1  width 0  →  Δx = 0                          cursor ▸ 03 e8 01 68 28 28
+  pt2  width 2  →  read "03 e8" = 0x03e8 = +1000   cursor ▸ ‖01 68 28 28   (03 e8 eaten)
+  pt3  width 0  →  Δx = 0
+
+Y pass (consume 4 bytes):
+  pt0  width 2  →  read "01 68" = 0x0168 = +360    cursor ▸ ‖28 28        (01 68 eaten)
+  pt1  width 1  →  read "28"    = 40, bit5=1 ⇒ +40  cursor ▸ ‖28           (28 eaten)
+  pt2  width 0  →  Δy = 0
+  pt3  width 1  →  read "28"    = 40, bit5=0 ⇒ −40  cursor ▸ ‖            (28 eaten — all 6 used)
+
+       pt0    pt1    pt2     pt3
+Δx:    +0     +0     +1000   +0
+Δy:    +360   +40    +0      −40
+
+absolute = running sum from 0 (add each delta to the previous point):
+x:  0 → 0 → 0 → 1000 → 1000        ⇒  x = 0, 0, 1000, 1000
+y:  0 → 360 → 400 → 400 → 360      ⇒  y = 360, 400, 400, 360</code></pre>
+  <table class="mono">
+    <tr><th>点</th><th>(x, y)</th><th>曲线上</th></tr>
+    <tr><td>0</td><td>(0, 360)</td><td>是</td></tr>
+    <tr><td>1</td><td>(0, 400)</td><td>是</td></tr>
+    <tr><td>2</td><td>(1000, 400)</td><td>是</td></tr>
+    <tr><td>3</td><td>(1000, 360)</td><td>是</td></tr>
+  </table>
+  <p>四个曲线上角点 ⇒ 一个填充矩形 <code>(0,360)→(1000,400)</code>：一根贯穿全宽、40
+  单位高、悬在中部的横条——正是 <strong>'─'</strong>，与头部的包围盒吻合。24 个
+  字节全部对上了账。（注意那个 <code>−40</code> 是<em>增量</em>，不是坐标——这里累计
+  和始终 ≥ 0。但它不必如此：带<strong>降部</strong>的字形会把 y 的累计和带到
+  <em>基线之下</em>的负数区——比如 <code>'g'</code> 到 <code>y = −175</code>——这正
+  是每个坐标字段都用<em>带符号</em> int16 的原因。）</p>
+
+  <div class="callout key">
+    <span class="label">原始字节与 g.coordinates——别把两层搞混</span>
+    这套增量/累加编码<strong>只存在于原始 glyf 字节里</strong>。fontTools 的
+    <code>g.coordinates</code>（第 3 步）已经是<strong>绝对</strong>坐标——加载字形的
+    那一刻它就把累加做完了。所以 <code>'十'</code> 的
+    <code>g.coordinates = [(536,386), (537,−59), …]</code> 是可以直接拿去画的位置（画出来
+    也对）；要是把<em>它们</em>当增量再累加一遍，你会得到
+    <code>(536,386), (1073,327), …</code>——x 超出 1000 em，纯属胡闹。只有像本节这样
+    亲手解析原始字节时，才需要自己做累加。
+  </div>
+
+  <div class="callout warn">
+    <span class="label">两个坑</span>
+    坐标是<strong>先全部 x 再全部 y</strong>（读完所有 x 增量才轮到 y），而第 4/5 位
+    <strong>看上下文</strong>——对应的 SHORT 位置位时是“符号”，没置位时是
+    “增量为零”。把它们当成一成不变的单一含义，坐标就会漂。
+  </div>
+
+  <h3>字节里的复合字形：分音符</h3>
+  <p>复合字形自己不画任何轮廓——它摆放<em>别的</em>字形，每个占一条
+  <strong>组件记录</strong>：一个 16 位的 flags 字、被引用字形的索引，然后是摆放
+  参数（可选地再跟一个变换）。带间距的分音符 <code>numberOfContours = −1</code>，随后
+  就是一条这样的记录：</p>
+<pre class="bytemap"><span class="b f0">ff ff</span> <span class="b f1">00 6c 02 50 01 88 02 bd</span> <span class="b f2">00 07</span> <span class="b f3">a4 67</span> <span class="b f4">01 f4 00 00</span></pre>
+  <table>
+    <tr><th class="mono">字节</th><th>字段</th><th>值</th></tr>
+    <tr><td class="mono">ff ff</td><td>numberOfContours</td><td class="mono">−1 ⇒ 复合字形</td></tr>
+    <tr><td class="mono">00 6c…02 bd</td><td>包围盒</td><td class="mono">(108,592)…(392,701)</td></tr>
+    <tr><td class="mono">00 07</td><td>组件 flags（uint16）</td><td class="mono">0x0007 = 第 0、1、2 位</td></tr>
+    <tr><td class="mono">a4 67</td><td>glyphIndex（uint16）</td><td class="mono">42087 ⇒ "dieresiscomb"</td></tr>
+    <tr><td class="mono">01 f4 00 00</td><td>arg1, arg2（2 × int16）</td><td class="mono">(500, 0)</td></tr>
+  </table>
+
+  <p><strong>这个 flags 字支配着它后面的一切。</strong>正如简单字形的坐标位决定每个
+  增量的宽度，这 16 个位让组件记录成为<em>变长</em>的——它们
+  决定参数有多宽、参数<em>是什么意思</em>、后面是否还跟着变换和更多
+  组件：</p>
+  <table class="mono">
+    <tr><th>位</th><th>掩码</th><th>名称</th><th>对记录的影响</th></tr>
+    <tr><td>0</td><td>0x0001</td><td>ARG_1_AND_2_ARE_WORDS</td><td>置位 ⇒ 两个参数是 int16（各 2 字节）；清零 ⇒ int8（各 1 字节）</td></tr>
+    <tr><td>1</td><td>0x0002</td><td>ARGS_ARE_XY_VALUES</td><td>置位 ⇒ 参数是 (x, y) 偏移；清零 ⇒ 参数是一对点匹配（见下文）</td></tr>
+    <tr><td>2</td><td>0x0004</td><td>ROUND_XY_TO_GRID</td><td>把摆放偏移取整到整数网格</td></tr>
+    <tr><td>3</td><td>0x0008</td><td>WE_HAVE_A_SCALE</td><td>参数后跟一个 F2Dot14 缩放（同时作用于 x 和 y）</td></tr>
+    <tr><td>5</td><td>0x0020</td><td>MORE_COMPONENTS</td><td>后面还有一条组件记录；清零 ⇒ 这是最后一条</td></tr>
+    <tr><td>6</td><td>0x0040</td><td>WE_HAVE_AN_X_AND_Y_SCALE</td><td>后跟两个 F2Dot14 缩放（sx、sy）</td></tr>
+    <tr><td>7</td><td>0x0080</td><td>WE_HAVE_A_TWO_BY_TWO</td><td>后跟一个完整的 2×2 矩阵（4 × F2Dot14）</td></tr>
+    <tr><td>9</td><td>0x0200</td><td>USE_MY_METRICS</td><td>复合字形继承该组件的前进宽度/左侧边距</td></tr>
+  </table>
+  <p>我们这条是 <code>0x0007</code> = 第 0+1+2 位 ⇒ <code>ARG_1_AND_2_ARE_WORDS | ARGS_ARE_XY_VALUES |
+  ROUND_XY_TO_GRID</code>。所以参数是 <strong>int16</strong>（这就是 <code>01 f4 00 00</code> 占
+  4 字节而非 2 字节的原因），它们是一个 <strong>xy 偏移</strong>，且该偏移会<strong>取整到
+  网格</strong>。缩放位和 2×2 位都没置 ⇒ 变换是<strong>恒等变换</strong>——纯
+  平移，不缩放不旋转。</p>
+
+  <p><strong>glyphIndex</strong> <code>a4 67</code> = <code>0xa467</code> = <strong>42087</strong>，是指向
+  同一字体内部的裸<em>字形 ID</em>；索引 42087 的轮廓是组合分音符（可读的名字
+  "dieresiscomb" 来自 <code>post</code>/<code>cmap</code>，不来自这些字节）。它像普通字形一样经
+  <code>loca</code>/<code>glyf</code> 解析——所以这种引用是<strong>递归</strong>的：组件本身
+  也可以是复合字形，层层嵌套，直到落到真正的轮廓上。</p>
+
+  <p><strong>arg1、arg2</strong> <code>01 f4 00 00</code> = <code>(0x01f4, 0x0000)</code> =
+  <strong>(500, 0)</strong>。因为 ARGS_ARE_XY_VALUES 置位，它们是一个<strong>摆放偏移</strong>，
+  绘制前加到组件的每个点上（把分音符右移 500 单位、上移 0）。
+  若那一位<em>清零</em>，同样这两个值就成了一对<strong>点匹配</strong>
+  ——“把已拼好部分的第 <em>arg1</em> 号点焊到本组件的第 <em>arg2</em> 号点上”——
+  某些字体用这种替代锚定机制把附加符号吸到基字上。</p>
+
+  <p>没有 <code>MORE_COMPONENTS</code> 位（0x0020）⇒ 这是唯一的组件。整个字形就是“把
+  字形 42087 摆到偏移 (500, 0)，恒等变换”。<strong>复合字形的价值就在这里</strong>：中文
+  共享偏旁，带附加符号的拉丁字母共享基字加符号——轮廓只存一份，引用许多次——既省
+  空间，又保证每份拷贝在视觉上分毫不差。</p>
+
+  <h3>不止一个组件</h3>
+  <p>复合字形通常摆放<em>好几个</em>字形。没有计数字段——记录直接
+  <strong>首尾相接</strong>，每条记录用自己的 <code>MORE_COMPONENTS</code> 位（0x0020）表示“后面
+  还有一条”。解析器循环：读一条记录，该位置位就接着读下一条；最后一条记录
+  把它留空。（本教程的两款字体碰巧只用单组件复合字形，所以下面这串字节
+  是<strong>人为构造</strong>的例子——一个由基字 <code>'a'</code> +
+  分音符拼成的带音符 <code>'ä'</code>——但布局与真实情况分毫不差：）</p>
+<pre class="bytemap"><span class="b f0">ff ff</span> <span class="b f1">&lt;8 bbox bytes&gt;</span>  <span class="b f2">00 27</span> <span class="b f3">00 79</span> <span class="b f4">00 00 00 00</span>  <span class="b f2">00 07</span> <span class="b f3">a4 67</span> <span class="b f4">01 f4 02 58</span></pre>
+  <table>
+    <tr><th class="mono">字节</th><th>字段</th><th>值</th></tr>
+    <tr><td class="mono">ff ff</td><td>numberOfContours</td><td class="mono">−1 ⇒ 复合字形</td></tr>
+    <tr><td class="mono">&lt;8 bytes&gt;</td><td>包围盒</td><td class="mono">（罩住两个组件）</td></tr>
+    <tr><td class="mono" colspan="3"><strong>组件 1——基字</strong></td></tr>
+    <tr><td class="mono">00 27</td><td>flags</td><td class="mono">0x0027 = 第 0、1、2、<strong>5</strong> 位 ⇒ …| <strong>MORE_COMPONENTS</strong></td></tr>
+    <tr><td class="mono">00 79</td><td>glyphIndex</td><td class="mono">121 = "a"</td></tr>
+    <tr><td class="mono">00 00 00 00</td><td>arg1, arg2</td><td class="mono">(0, 0)——基字在原点</td></tr>
+    <tr><td class="mono" colspan="3"><strong>组件 2——附加符号</strong></td></tr>
+    <tr><td class="mono">00 07</td><td>flags</td><td class="mono">0x0007——<strong>没有</strong> MORE_COMPONENTS ⇒ 最后一条记录</td></tr>
+    <tr><td class="mono">a4 67</td><td>glyphIndex</td><td class="mono">42087 = "dieresiscomb"</td></tr>
+    <tr><td class="mono">01 f4 02 58</td><td>arg1, arg2</td><td class="mono">(500, 600)——符号抬到 'a' 上方</td></tr>
+  </table>
+  <p>每条记录各带各的 flags，所以组件可以混用不同的宽度和变换——一条用 int8
+  参数配恒等变换，下一条用 int16 参数带缩放。<em>最后</em>一条记录之后还可能出现一样
+  东西：只要有组件置了 <code>WE_HAVE_INSTRUCTIONS</code>（0x0100），一个 <code>uint16</code>
+  指令长度加相应数量的 hinting 字节就给这个字形收尾。否则 MORE_COMPONENTS
+  链一断，字形当场结束。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.7</span><span class="x-kind code">编程题</span></div>
+    <p><strong>徒手解析一个字形轮廓。</strong>不借助 <code>g.coordinates</code>，取出一个
+    简单字形的原始字节，解析头部、flags（当心 REPEAT）和增量编码的坐标，
+    重建出绝对坐标点。与 <code>g.coordinates</code> 对照验证。从 <code>'─'</code>
+    起步最干净。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      字节用 <code>raw = g.compile(font['glyf'])</code> 取（或拿 <code>loca</code> 在文件里 seek）。
+      头部：<code>int16</code> numberOfContours + 4×<code>int16</code> 包围盒；然后 numberOfContours 个
+      <code>uint16</code> 终点索引；<code>uint16</code> instructionLength + 相应数量的指令字节；
+      flags（展开 REPEAT）；再是所有 x 增量、所有 y 增量，宽度看 SHORT/SAME 位；
+      从 0 开始累加。
+    </details>
+    <details><summary>✓ 核对答案（'─'）</summary>
+      4 个曲线上点 <code>(0,360) (0,400) (1000,400) (1000,360)</code>——一个矩形，与
+      包围盒 <code>(0,360)…(1000,400)</code> 吻合。
+    </details>
+    <p class="check-note">可按上面自查——或把你的解析器和坐标点贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <!-- ───────────────────────── TOOLING ───────────────────────── -->
+  <span class="section-tag tool">工具与探查</span>
+  <h2>自己动手探索轮廓</h2>
+  <p>还是那套 <code>type</code>/<code>dir</code>/<code>help</code> 三板斧。字形对象暴露
+  <code>.numberOfContours</code>、<code>.coordinates</code>、<code>.flags</code>、
+  <code>.endPtsOfContours</code>、<code>.isComposite()</code>、<code>.getComponentNames(glyf)</code>、
+  <code>.draw(pen)</code>/<code>.drawPoints(pen)</code>、<code>.program</code>（hinting），以及
+  <code>.compile(glyf)</code>（编回原始字节）。</p>
+  <p>这里真正的大想法是 <strong>pen 协议</strong>：轮廓被重放成一串绘图命令
+  （<code>moveTo</code>、<code>lineTo</code>、<code>qCurveTo</code>、<code>closePath</code>），喂给一支“pen”。
+  <code>RecordingPen</code> 负责记录；<code>BoundsPen</code> 负责量尺寸；<code>SVGPathPen</code> 输出
+  SVG。它把裸点变成能直接用的东西，隐含中点的数学也不用你重算一遍：</p>
+<pre><code><span class="kw">from</span> fontTools.pens.recordingPen <span class="kw">import</span> RecordingPen
+pen = RecordingPen()
+name = font.getBestCmap()[<span class="num">0x2500</span>]        <span class="cmt"># "boxdrawingslighthorizontal"</span>
+font.getGlyphSet()[name].draw(pen)
+pen.value   <span class="cmt"># [('moveTo', …), ('lineTo', …), ('closePath', ())]</span></code></pre>
+  <table>
+    <tr><th>工具</th><th>用途</th></tr>
+    <tr><td class="mono">ttx -t glyf font.ttf</td><td>把 glyf 导出成可读的 XML——点、flags、组件</td></tr>
+    <tr><td class="mono">fontforge</td><td>打开一个字形；轮廓视图直接显示曲线上/曲线外点</td></tr>
+  </table>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">3.8</span><span class="x-kind code">编程题</span></div>
+    <p><strong>用 pen 重放轮廓。</strong>用 <code>RecordingPen</code> 抓下 <code>'─'</code>
+    （U+2500）和 <code>'一'</code>（U+4E00）的绘图命令。矩形的命令列表和带曲线那个
+    差在哪？曲线外点串由哪个命令携带？加分项：
+    对字形对象 <code>dir()</code> 一下，说出两个你还没用过的成员。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      <code>gs = font.getGlyphSet(); gs[font.getBestCmap()[0x2500]].draw(pen)</code> 会填好
+      <code>pen.value</code>（这个字形名叫 "boxdrawingslighthorizontal"）。直边 →
+      <code>lineTo</code>；二次曲线段 → <code>qCurveTo</code>（隐含中点 fontTools 替你
+      重建好了）。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      '─' 全是 <code>moveTo</code>/<code>lineTo</code>×3/<code>closePath</code>（多边形，没有曲线）；
+      '一' 含有 <code>qCurveTo</code> 命令，其中多出来的点就是曲线外控制点。值得一找的
+      成员：<code>getCoordinates</code>、<code>recalcBounds</code>、<code>removeHinting</code>、
+      <code>drawPoints</code>。
+    </details>
+    <p class="check-note">可按上面自查——或把两份命令列表贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="3">标记本模块完成</button>
+
+  <div class="pager">
+    <a class="prev" href="02-cmap-glyphs.zh.html"><span class="dir">←</span><span class="ttl">02 · cmap 与字形 ID</span></a>
+    <a class="next" href="04-metrics.zh.html"><span class="dir">下一模块 →</span><span class="ttl">04 · 度量与 em</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

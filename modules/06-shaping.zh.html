@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>06 · 整形与布局</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">模块 06</p>
+  <h1>整形与布局</h1>
+  <p class="lede">到这里，你的字体已经能把字符映射到字形（模块 2）、画出轮廓（模块 3）、知道每个字形有多宽（模块 4）。但真正的排版远不止“一个字符一个字形，逐个排开”。<em>整形（shaping）</em>就是在落笔绘制之前改写并重新摆放字形串的那一步——把 <code>f+i</code> 合成一个
+  <code>fi</code>，把 <code>AV</code> 往一起收一收，或者把某个字形换成竖排用的形式，
+  好让 CJK 文字从上往下排。</p>
+  <p class="legend">练习是<strong>穿插式</strong>的——每道题就放在它考察的概念下面。
+  概念题带答案；编程题带可折叠的核对说明。</p>
+
+  <!-- ───────────────────────── CONCEPT ───────────────────────── -->
+  <span class="section-tag concept">概念</span>
+  <h2>字形如何组合与移动</h2>
+
+  <p>回顾一下目前的流水线。文本以 <strong>Unicode 码位</strong>的形式进来。
+  <code>cmap</code> 表（模块 2）把每个码位转成<strong>字形 ID</strong>，得到
+  最初那串朴素的字形 ID。随后按 <code>hmtx</code>（模块 4）给出的前进宽度
+  画出轮廓（模块 3）。中间缺的那一步就是<strong>整形</strong>：</p>
+
+<pre><code>text (Unicode)
+   │  cmap            ← codepoint → glyph-ID  (Module 2)
+   ▼
+glyph-ID run (naïve)
+   │  SHAPING         ← GSUB rewrites + GPOS repositions   ◀── this module
+   ▼
+final positioned glyph run
+   │  outline fill at advances  (Modules 3 + 4)
+   ▼
+pixels</code></pre>
+
+  <p>整形<em>介于</em> <code>cmap</code> 与最终摆放之间。驱动它的是两张表——
+  一张管替换，一张管定位——两者几乎总是结伴出现：</p>
+
+  <ul>
+    <li><strong><code>GSUB</code>——Glyph SUBstitution（字形替换）。</strong>把字形 ID 换成别的
+      字形 ID。连字（<code>f</code>+<code>i</code> → <code>fi</code>）、上下文
+      替代、组合/分解、分数拼合（<code>1/2</code> → <code>½</code>）、
+      上标下标、风格替代、竖排形式切换，全住在这里。字形的
+      <em>数量</em>可以改变。</li>
+    <li><strong><code>GPOS</code>——Glyph POSitioning（字形定位）。</strong>只移动字形，不改变
+      它们<em>是哪些</em>字形。字距调整、附标挂基字与附标叠附标（各种附加符号）、
+      连笔衔接、竖排度量微调都发生在这里。字形 ID 原封不动；
+      变的只有 x/y 偏移和前进宽度。</li>
+  </ul>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.1</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>给流水线排序。</strong>把下面四个阶段按执行顺序排好，并各用一句话
+    说明它做什么：<code>GPOS</code>、<code>cmap</code>、<code>GSUB</code>、轮廓填充。</p>
+    <details><summary>看答案</summary>
+      <strong>1. <code>cmap</code></strong>——把每个 Unicode 码位转成基础字形 ID。
+      <strong>2. <code>GSUB</code></strong>——替换字形 ID（连字、替代字形、竖排
+      形式）：字形串长度可能改变。<strong>3. <code>GPOS</code></strong>——移动字形
+      （字距调整、挂附标、微调度量），不改变它们是哪些字形。
+      <strong>4. 轮廓填充</strong>——在每个字形最终的位置/前进宽度上画出它的轮廓。
+      GSUB 先于 GPOS：先决定<em>用哪些</em>字形，再决定<em>摆在哪里</em>。
+    </details>
+  </div>
+
+  <p>两张表内部共用同一套层级结构：</p>
+
+<pre><code>Script  (e.g. latn, hani)
+  └─ LangSys  (language system, often just the default)
+       └─ Features  (4-letter tags: 'liga', 'kern', 'calt', 'vert' …)
+            └─ Lookups  (the actual substitution / positioning rules, run in order)</code></pre>
+
+  <p><strong>特性（feature）</strong>是应用程序可以选择开启的四字母 tag；tag
+  本身只是个名字，指向一个或多个 <strong>lookup</strong>——真正的规则存在 lookup 里，
+  按顺序执行。有的特性<em>默认开启</em>（除非明确要求关闭，引擎都会应用——如
+  <code>ccmp</code>、<code>calt</code>）；有的则<em>按需开启</em>，只在排版
+  请求时才生效（如 <code>frac</code>、<code>sups</code>）。</p>
+
+  <div class="callout">
+    <span class="label">规则到底谁来执行</span>
+    字体只负责<em>存放</em> GSUB/GPOS；真正执行它们的是<strong>整形引擎</strong>。
+    开源世界事实上的标准是 <strong>HarfBuzz</strong>——Chrome、Firefox、Android、
+    LibreOffice 背后都是它。操作系统自带的对应物是 <strong>CoreText</strong>（macOS / iOS）和
+    <strong>DirectWrite</strong>（Windows）。它们读取文种和特性，逐个走 lookup，
+    输出最终摆放好的字形串。
+  </div>
+
+  <p>拉丁文字跳过整形，顶多难看，还能读。<strong>复杂文种</strong>就没得
+  商量了：阿拉伯字母必须<em>连写</em>，并按位置取词首/词中/词尾/独立四种形式；许多
+  印度系文字还要<em>重排</em>元音、拼合辅音连体。在这些文字里，<code>cmap</code>
+  的原始输出——一个码位一个字形、从左到右——是真正读不了的。整形决定的是文本
+  对不对，而不只是好不好看。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.2</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>为什么有些文种绕不开整形。</strong>纯英文靠 <code>cmap</code>
+    的原始输出大体还能凑合，阿拉伯文和印度系文字却真正<em>离不开</em>整形引擎。
+    为什么？</p>
+    <details><summary>看答案</summary>
+      拉丁文字的码位本来就按视觉顺序排列，每个字母基本只有一种形态，所以
+      一码位一字形是可读的（损失的只有连字和字距调整——纯属观感）。阿拉伯字母要
+      <em>连写</em>，形态随位置变化（词首/词中/词尾/独立），引擎必须选对
+      上下文形式并把字母接起来。许多印度系文字还会<em>重排</em>——排在
+      辅音后面输入的元音，可能要显示在它前面——并把辅音簇合并成连体
+      字形。这些都是整形引擎经由 GSUB/GPOS 完成的强制性替换与重排；
+      没有它，cmap 的原始输出顺序不对、形态也不对——不是不够精致，
+      是读不了。
+    </details>
+  </div>
+
+  <div class="callout key">
+    <span class="label">两张容易搞混的“映射”</span>
+    <code>cmap</code> 是<strong>码位 → 字形</strong>：一次查表、不看上下文，是整个流程的入口。
+    <code>GSUB</code> 是<strong>字形 → 上下文中的一个或多个字形</strong>：属于排版层，在其后应用。
+    还要提防第二处撞名：GSUB 里 <code>ccmp</code> 的“组合”是一种<em>整形
+    替换</em>（把这几个字形 ID 换成那一个），跟模块 3 的
+    <em>复合字形</em>（一条轮廓把另一条轮廓当组件复用）完全是两码事。
+    词一样，层不一样。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.3</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>cmap 与 GSUB。</strong><code>cmap</code> 的映射和
+    <code>GSUB</code> 的替换有什么区别？各举一个具体例子。</p>
+    <details><summary>看答案</summary>
+      <code>cmap</code> 是一张单一的、不看上下文的表，把<em>一个码位映射到一个基础
+      字形</em>——例如 U+4E00“一”→ 字形 <code>u4E00</code>。<code>GSUB</code> 接过这串
+      字形，<em>结合上下文</em>改写它，连数量都可能变——例如
+      <code>f</code>+<code>i</code> 的两个字形 → 一个 <code>fi</code> 连字，或者开着
+      <code>frac</code> 时一串数字坍缩成 <code>½</code>。cmap 回答“这个字符一开始
+      是哪个字形？”；GSUB 回答“看看周围的字形和请求的特性，它
+      该变成什么？”。
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.4</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>两种“复合”。</strong>GSUB 的 <code>ccmp</code> 叫<em>字形
+    组合/分解</em>，模块 3 又有<em>复合字形</em>。两者都在“拼”
+    东西，到底差在哪？</p>
+    <details><summary>看答案</summary>
+      层次不同。<strong>GSUB <code>ccmp</code></strong> 是一种<em>整形替换</em>：它
+      改写的是<em>字形 ID 串</em>——比如把一个预组合字符拆成基字 + 附标
+      两个字形（或反过来合并），好让后面的附标定位 lookup 干净利落地把它们挂上去。
+      它操作的是字形序列，发生在绘制之前。<strong>模块 3 的复合字形</strong>
+      是 <code>glyf</code> 内部的<em>轮廓复用</em>机制：一个字形的轮廓
+      通过引用另一个字形作为组件、放到某个偏移处来定义（例如 <code>dieresis</code>
+      在 x=500 处复用 <code>dieresiscomb</code>）。那说的是<em>单个</em>字形的形状
+      怎么存，跟改写字形串无关。ccmp 改变<em>用哪些字形</em>；glyf 复合改变
+      <em>一个字形怎么画</em>。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
+  <span class="section-tag walk">解读</span>
+  <h2>霞鹜文楷等宽 GB（LXGW WenKai Mono GB）的 GSUB / GPOS 拆解</h2>
+
+  <p>直接从两张布局表里读出来，<code>LXGWWenKaiMonoGB-Regular.ttf</code> 实际携带的
+  内容如下：</p>
+
+  <table class="mono">
+    <tr><th>表</th><th>文种</th><th>lookup 数</th><th>特性</th></tr>
+    <tr>
+      <td>GSUB</td>
+      <td>DFLT bopo grek hani kana latn</td>
+      <td>12</td>
+      <td>afrc calt ccmp frac salt subs sups vert</td>
+    </tr>
+    <tr>
+      <td>GPOS</td>
+      <td>DFLT bopo grek hani kana latn</td>
+      <td>3</td>
+      <td>halt vert vhal</td>
+    </tr>
+  </table>
+
+  <p>回想模块 1 的表目录：<code>GPOS</code> 只有 420 字节，<code>GSUB</code>
+  也不过 5564 字节——跟 24.7 MB 的 <code>glyf</code> 块比起来微不足道，却
+  装下了全部排版逻辑。</p>
+
+  <h3>实际出现的文种 tag</h3>
+  <table class="mono">
+    <tr><th>tag</th><th>文种</th></tr>
+    <tr><td>hani</td><td>汉字（CJK 表意文字）</td></tr>
+    <tr><td>kana</td><td>日文假名（平假名/片假名）</td></tr>
+    <tr><td>bopo</td><td>注音符号（Bopomofo，即 ㄅㄆㄇㄈ）</td></tr>
+    <tr><td>grek</td><td>希腊文</td></tr>
+    <tr><td>latn</td><td>拉丁文</td></tr>
+    <tr><td>DFLT</td><td>默认兜底（上面都没匹配到的归这里）</td></tr>
+  </table>
+
+  <h3>逐个解码字体里的每个特性 tag</h3>
+  <p><em>只</em>解码这款字体实际声明的 tag——多一个都不讲：</p>
+  <table class="mono">
+    <tr><th>tag</th><th>表</th><th>作用</th></tr>
+    <tr><td>calt</td><td>GSUB</td><td>上下文替代——根据相邻字形换用不同的字形</td></tr>
+    <tr><td>ccmp</td><td>GSUB</td><td>字形组合/分解（整形层面的重组）</td></tr>
+    <tr><td>frac</td><td>GSUB</td><td>分数——<code>1/2</code> → <code>½</code>（斜排形式）</td></tr>
+    <tr><td>afrc</td><td>GSUB</td><td>替代分数（竖式/“nut”分数）——分子叠在分母上</td></tr>
+    <tr><td>sups</td><td>GSUB</td><td>上标形式</td></tr>
+    <tr><td>subs</td><td>GSUB</td><td>下标形式</td></tr>
+    <tr><td>salt</td><td>GSUB</td><td>风格替代——由用户自选的替代造型</td></tr>
+    <tr><td>vert</td><td>GSUB</td><td>竖排替代——把字形换成它的竖排形式</td></tr>
+    <tr><td>halt</td><td>GPOS</td><td>替代<em>横排</em>度量（重新调整占宽）</td></tr>
+    <tr><td>vhal</td><td>GPOS</td><td>替代<em>竖排</em>度量</td></tr>
+    <tr><td>vert</td><td>GPOS</td><td>配合上面竖排形式切换的定位调整</td></tr>
+  </table>
+
+  <p>留意这份列表里<strong>没有</strong>什么：样本里既没有 <code>liga</code> 也没有
+  <code>kern</code>。别想当然——这款字体就是没声明它们。
+  它的特性集合明摆着<strong>面向 CJK 和排版功能</strong>，不走拉丁连字那一路。</p>
+
+  <div class="callout key">
+    <span class="label">为什么恰好是这套特性组合</span>
+    这款字体把 GSUB <code>vert</code> 和 GPOS <code>vert</code>、<code>vhal</code>、
+    <code>halt</code> 打包在一起，原因只有一个：<strong>CJK 文本可以竖排。</strong>
+    排版引擎切到竖排模式时，GSUB <code>vert</code> <em>把字形换成竖排
+    形式</em>（比如旋转后的括号和标点），GPOS <code>vert</code> /
+    <code>vhal</code> / <code>halt</code> 则<em>为新的方向调整度量</em>。定位这一侧
+    依赖模块 4 讲过的 <code>vhea</code> 和 <code>vmtx</code> 表——
+    竖排头部和竖排前进宽度。替换与定位协同作战，正是 GSUB + GPOS
+    的分工，而这里它们服务的正是竖排 CJK。
+  </div>
+
+  <div class="callout proof">
+    <span class="label">自己动手验证</span>
+    <code>python specimens/extract.py LXGWWenKaiMonoGB-Regular.ttf</code> 会打印出这些
+    文种/特性/lookup 数字。下面的练习用 fontTools 手工走一遍同样的表。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.5</span><span class="x-kind code">编程题</span></div>
+    <p><strong>用 fontTools 遍历布局表。</strong>用
+    <code>python</code> 打开文楷，对 <code>GSUB</code> 和
+    <code>GPOS</code> 各打印：文种 tag、特性 tag、lookup 数量。你的输出应能
+    复现解读部分的表格（各 6 个文种；GSUB 12 个 lookup / 8 个特性；GPOS
+    3 个 lookup / 3 个特性）。</p>
+    <p>对 <code>GSUB</code> 和 <code>GPOS</code> 各自：拿到表对象，收集文种
+    tag 和特性 tag，数出 lookup 数量，然后把三者都打印出来，跟上面解读部分的
+    数字对上。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      层级结构可以从 <code>f['GSUB'].table.ScriptList</code> /
+      <code>.FeatureList</code> / <code>.LookupList</code> 一路访问。每个 <code>ScriptRecord</code> 有
+      <code>.ScriptTag</code>；每个 <code>FeatureRecord</code> 有 <code>.FeatureTag</code>；lookup 数量
+      看 <code>LookupList.LookupCount</code>（或 <code>len(LookupList.Lookup)</code>）。
+    </details>
+    <p class="check-note">把你的代码和输出贴给 AI 导师，让它核对 tag 和数量
+    是否与样本一致。</p>
+  </div>
+
+  <!-- ───────────────────────── GALLERY: GSUB ───────────────────────── -->
+  <span class="section-tag walk">解读 · 实际效果</span>
+  <h2>GSUB 实战：替换前 → 替换后的字形串</h2>
+
+  <p>特性 tag 很抽象，直到你亲眼看它改写一串字形。下表每一行都是<strong>这款
+  字体里真实发生的替换</strong>：把字符串丢给 HarfBuzz 整形，再和朴素的
+  <code>cmap</code> 输出做 diff 得来。每行读作<em>字形 ID 原来是什么</em> →
+  <em>GSUB 把它们变成了什么</em>。盯住<strong>数量的变化</strong>——那是 GSUB 的签名。</p>
+
+  <table class="mono">
+    <tr><th>特性</th><th>你输入</th><th>字形串：替换前 → 替换后</th><th>发生了什么</th></tr>
+    <tr><td>frac</td><td>1/2</td><td><code>[one, slash, two]</code> → <code>[onehalf.full]</code></td><td>3 个字形坍缩成<strong>一个</strong> ½</td></tr>
+    <tr><td>frac</td><td>3/4</td><td><code>[three, slash, four]</code> → <code>[threequarters.full]</code></td><td>同一条规则，分子分母随意 → ¾</td></tr>
+    <tr><td>afrc</td><td>1/2</td><td><code>[one, slash, two]</code> → <code>[one_fraction_two.nut]</code></td><td><em>竖式</em>“nut”分数（分子叠在分母上）</td></tr>
+    <tr><td>sups</td><td>2</td><td><code>[two]</code> → <code>[twosuperior]</code></td><td>1→1 换成升起的上标 ²</td></tr>
+    <tr><td>subs</td><td>3</td><td><code>[three]</code> → <code>[threeinferior]</code></td><td>1→1 换成下沉的下标 ₃</td></tr>
+    <tr><td>ccmp</td><td>A + ◌̀</td><td><code>[A, gravecomb]</code> → <code>[Agrave]</code></td><td><strong>组合</strong>：基字 + 独立的组合附标<em>合并</em>成一个预组合的 À，音符落得严丝合缝</td></tr>
+    <tr><td>ccmp</td><td>⸺（两 em 长破折号）</td><td><code>[twoemdash]</code> → <code>[emdash.ccmp, emdash]</code></td><td><strong>分解</strong>：1 个字形<em>展开</em>成无缝衔接的多段破折号，随便多长都连成一线</td></tr>
+    <tr><td>vert</td><td>。（竖排文本）</td><td><code>[ideographicfullstop]</code> → <code>[…verticalideographicfullstop]</code></td><td>换成该字形的<em>竖排形式</em>（句号挪到字格的右上角）</td></tr>
+    <tr><td>salt</td><td>（用户自选）</td><td><code>[glyph]</code> → <code>[glyph.salt]</code></td><td>由用户自选的<em>风格替代</em>造型——同一个字符，不同的画法</td></tr>
+  </table>
+
+  <p class="legend"><code>.full</code> / <code>.nut</code> / <code>.salt</code> 这些后缀只是字形名——
+  字体专门为对应特性准备的替代字形。GSUB 的全部工作，就是决定每个位置
+  最终落到<em>哪个</em>字形名上。</p>
+
+  <div class="callout key">
+    <span class="label">GSUB 替换类型——规则的四种形态</span>
+    上面每条替换都属于寥寥几种 lookup 类型之一：<strong>单一</strong>（1→1，如
+    <code>sups</code>、<code>vert</code>、<code>salt</code>）、<strong>多重</strong>（1→多，即
+    <code>ccmp</code> 破折号的<em>分解</em>）、<strong>连字</strong>（多→1，<code>frac</code> 和
+    <code>ccmp</code> 那个 À 的<em>组合</em>），以及<strong>上下文/链式</strong>（邻居匹配才
+    替换，<code>calt</code> 和大多数文种逻辑靠的就是它）。文楷的 12 个 GSUB lookup
+    恰好就是这几类（单一 ×5、多重、连字 ×3、链式 ×2）。
+  </div>
+
+  <p>跳出<em>这一款</em>字体，同一套机制还撑起那些经典特性——文楷虽然没
+  声明，但值得知道：</p>
+  <ul>
+    <li><strong><code>liga</code>——<code>f</code>+<code>i</code> → 单个 <code>fi</code></strong>
+      字形，f 的钩与去点的 i 画成一个整体（多→1，和 <code>frac</code> 同类）。</li>
+    <li><strong>阿拉伯文连写</strong>——一个字母按位置分出<em>四</em>种字形
+      （独立/词首/词中/词尾）；整形器选对上下文形式，字母才连得上。</li>
+    <li><strong>印度系文字重排</strong>——排在辅音<em>之后</em>输入的元音会被替换并
+      <em>挪到它前面</em>，辅音簇还会熔成连体字形。这是强制性的，不是装饰。</li>
+  </ul>
+
+  <!-- ───────────────────────── GALLERY: GPOS ───────────────────────── -->
+  <h2>GPOS 实战：字形不变，位置在动</h2>
+
+  <p>GPOS 从不改变你手里<em>是哪些</em>字形——串的长度固定不变。它改的是
+  <strong>x/y 偏移和前进宽度</strong>。文楷的 GPOS 全围着<strong>竖排 CJK 度量</strong>转；
+  下面是 HarfBuzz 给出的真实位置 diff（同一个字符的横排 vs 竖排）：</p>
+
+  <table class="mono">
+    <tr><th>特性</th><th>字形</th><th>横排</th><th>竖排</th><th>发生了什么</th></tr>
+    <tr><td>vert / vhal</td><td>。</td><td>x 前进宽度 <code>1000</code>，无偏移</td><td>y 前进宽度 <code>1000</code>（向下），y 偏移 <code>−880</code></td><td>小句号被抬到 em 字格的<strong>右上角</strong>，笔尖改为沿字列<em>向下</em>走，而不是向右</td></tr>
+  </table>
+
+  <p>再看外面世界依赖的那些 GPOS 经典（同样不在文楷里，但用的是同一张表）：</p>
+  <ul>
+    <li><strong><code>kern</code>——<code>AV</code></strong>：两个字形都原样保留，只把
+      <code>V</code> 向左移约 80 单位，让两个形状咬合到一起。纯定位，零替换。</li>
+    <li><strong><code>mark</code>（mark-to-base，附标挂基字）</strong>——组合附标靠
+      <em>锚点</em>（对准字母中心）而非前进宽度来定位，这样 <code>e</code>+<code>◌̈</code>
+      不管 <code>e</code> 多宽，分音符都正好落在正中。</li>
+    <li><strong><code>mkmk</code>（mark-to-mark，附标叠附标）</strong>——在第一个附标上方再叠
+      第二个（比如越南语），每一个都以前一个附标为基准排开。</li>
+    <li><strong><code>curs</code>（连笔衔接）</strong>——把一个字形的<em>出笔</em>锚点
+      焊到下一个字形的<em>入笔</em>锚点上，让阿拉伯文的连笔一气呵成。</li>
+  </ul>
+
+  <div class="callout key">
+    <span class="label">一句话判别法：数量变了没？</span>
+    字形串变<em>长或变短</em>了，那是 <strong>GSUB</strong>（连字、分解、
+    分数）。字形<em>还是那些</em>、只是待的位置变了，那是
+    <strong>GPOS</strong>（字距调整、挂附标、竖排度量）。GSUB 决定<em>用哪些</em>字形，GPOS
+    决定<em>摆在哪里</em>——顺序永远如此。
+  </div>
+
+  <div class="callout proof">
+    <span class="label">自己复现</span>
+    这几行都是真实的 <code>hb.shape()</code> 输出。装好 HarfBuzz
+    （<code>uv pip install uharfbuzz</code>）后，整形一个字符串，再把字形名和
+    <code>font.getBestCmap()</code> 做 diff；也可以直接跑命令行 <code>hb-shape --features=frac
+    LXGWWenKaiMonoGB-Regular.ttf "1/2"</code>，看着 <code>[one, slash, two]</code> 变成
+    <code>onehalf.full</code>。再加 <code>--direction=ttb</code>，就能看到 <code>vert</code> 替换生效。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">6.6</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>GSUB 还是 GPOS？</strong>对下面每个 tag——<code>calt</code>、<code>frac</code>、
+    <code>vert</code>——说出它属于哪张表、产生什么可见效果。</p>
+    <details><summary>看答案</summary>
+      <code>calt</code> = <strong>GSUB</strong>——根据相邻字形做替换（上下文
+      替代造型）。<code>frac</code> = <strong>GSUB</strong>——把数字/斜杠/数字的字形串
+      换成单个分数字形，如 <code>1/2</code> → <code>½</code>。<code>vert</code> 在这款字体里
+      <strong>两边都有</strong>：GSUB 的 <code>vert</code> 把字形换成竖排形式，GPOS 的
+      <code>vert</code> 为竖排微调该字形的位置/度量。<code>calt</code>/<code>frac</code>
+      这两个改变的是<em>用哪个</em>字形；<code>vert</code> 既换字形，
+      <em>还</em>要挪它的位置。
+    </details>
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="6">标记本模块完成</button>
+
+  <div class="pager">
+    <a class="prev" href="05-families.zh.html"><span class="dir">←</span><span class="ttl">05 · 身份与家族</span></a>
+    <a class="next" href="07-packaging.zh.html"><span class="dir">下一模块 →</span><span class="ttl">07 · 打包与前沿</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

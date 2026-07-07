@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>07 · 打包与前沿</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">模块 07</p>
+  <h1>打包与前沿</h1>
+  <p class="lede">到这里，你已经能把一个字体文件从头读到尾。剩下最后一个问题：怎么把它<em>交付</em>出去
+  ——一个文件如何装下多款字体（字体集合）、装下无限多款（可变字体）、用更小的下载体积装下同样的内容
+  （网页字体），以及你在模块 3 研究过的那套分辨率无关的轮廓，最终如何变成实实在在的像素。
+  这里的一切都复用模块 1 的容器模型——底层没有发明任何新东西。</p>
+  <p class="legend">练习<strong>穿插</strong>在正文中——每道题都紧跟它考察的概念。
+  概念题附答案；编程题附可折叠的核对项。</p>
+
+  <!-- ───────────────────────── CONCEPT ───────────────────────── -->
+  <span class="section-tag concept">概念</span>
+  <h2>字体的交付：集合、可变字体、网页字体与栅格化</h2>
+
+  <p>一个 <code>.ttf</code>/<code>.otf</code> 只装<strong>一</strong>款字体。本课程构建的混合字体
+  需要十八款，所以它以 <code>.ttc</code>——字体<em>集合</em>——的形式交付；这也是本模块的主线，
+  下面的解读会把它拆开看。但集合只是交付字体的一种方式，所以我们把几个交付问题按顺序过一遍：</p>
+  <ul>
+    <li><strong>一个文件装多款字体</strong>——<em>集合</em>（我们用的方案）对比
+      <em>可变字体</em>（另一条路，但我们手里是两款不相干的字体，走不通）。</li>
+    <li><strong>同一个字体，更小的体积</strong>——网页压缩（WOFF2）与子集化，对这个体量的
+      CJK 字体来说分量极重。</li>
+    <li><strong>从轮廓到像素</strong>——栅格化，补上模块 3 的最后一环。</li>
+  </ul>
+  <p>每个答案都只是把模块 1 那套 sfnt 表换一种排布，底层没有发明任何新东西。（有一样东西不在
+  这条主线上——字形携带的不是裸轮廓而是<em>颜色</em>——所以它放在结尾作一段简短的旁注，
+  不占一个编号小节。）</p>
+
+  <h3>1 · 字体集合（<code>.ttc</code> / <code>.otc</code>）</h3>
+  <p>回忆模块 1 的魔数：集合文件以
+  <code>74 74 63 66</code> = <strong>"ttcf"</strong> 开头。文件开头不再是单个 sfnt 表目录，
+  而是一个<em>集合头部</em>，列出<strong>多个</strong>内嵌 sfnt 表目录各自的字节偏移。
+  关键的花招在这里：两个表目录里的记录，
+  <code>offset</code> 字段可以<strong>指向同一段物理表字节</strong>。</p>
+
+  <div class="callout key">
+    <span class="label">可迁移的洞见</span>
+    集合就是靠共享 offset 做去重。如果 <em>N</em> 款字体共用一套轮廓，
+    那些大表（<code>glyf</code>、<code>cmap</code>、<code>hmtx</code>……）只存
+    <strong>一份</strong>；每款字体的表目录只是把自己的 <code>glyf</code> 记录指到
+    同一处字节。逐款重复的只有小块元数据（<code>name</code>、<code>OS/2</code>、
+    <code>head</code>）。fontTools 的
+    <code>TTCollection.save(shareTables=True)</code> 干的正是这件事，也正因为它，
+    整门课的混合字体用约 2 个字体的磁盘装下了 9 个家族。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.1</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>字节都去哪儿了？</strong>这个装着 18 款字体的 <code>.ttc</code> 约 42 MB——
+    大致等于<em>两款</em>源字体加起来的体积，而不是一款源字体的 <em>9 倍</em>。解释这是怎么
+    做到的，以及哪些表是例外、<em>确实</em>被复制了多份。</p>
+    <details><summary>看答案</summary>
+      18 款字体实际只引用<strong>两</strong>套物理表：9 个 Regular 款共用的是霞鹜文楷等宽 GB
+      （LXGW WenKai Mono GB，下称文楷）的 <code>glyf</code>/<code>cmap</code>/<code>hmtx</code>（同一个 offset），9 个
+      Bold 款共用霞鹜臻楷 GB（LXGW ZhenKai GB，下称臻楷）的。<code>shareTables=True</code> 把每张大表只存一份，
+      让多个表目录都指向它。逐款重复的只有那些<em>必须</em>不同的小块元数据——
+      <code>name</code>、<code>OS/2</code>、<code>head</code>——和 24.7 MB 的轮廓数据一比
+      微不足道。
+    </details>
+  </div>
+
+  <h3>2 · 可变字体</h3>
+  <p>集合打包的是几款<em>固定的、已完成的</em>字体。<strong>可变字体</strong>是同一个目标——
+  一个文件、多种样式——的<em>另一个</em>答案，走的机制完全不同：它不把每个字重都存成一套
+  完整轮廓，而是只存<strong>一套</strong>
+  母版轮廓，再为每个字形存一组<strong>增量（delta）</strong>——记录设计变化时
+  每个点该怎么移动。渲染器把这些增量按某个比例加到母版上，
+  就得到任意一款中间字体，<em>按需插值</em>。所以两者是
+  <strong>二选一的方案</strong>，不是不相干的概念：集合靠
+  <em>打包</em>固定字体提供多种样式；可变字体靠对一套母版做<em>插值</em>。</p>
+
+  <p>让点<em>沿着</em>什么移动？沿着一条<strong>轴</strong>——一个有名字的、连续的设计维度，
+  比如从纤细到超黑的字重，或从窄体到宽体的字宽。每条轴由一个注册的
+  <strong>四字母 tag</strong> 标识（跟贯穿 sfnt 的 4 字节 tag 是同一个思路），
+  一款字体提供哪些轴、范围多大，由它自己<em>声明</em>，写在
+  <code>fvar</code> 表里（见下表第一行）。你最常遇到的注册轴：</p>
+  <ul>
+    <li><code>wght</code>——<strong>字重</strong>（如 100 Thin … 400 Regular … 900 Black）</li>
+    <li><code>wdth</code>——<strong>字宽</strong>（窄体 … 宽体）</li>
+    <li><code>opsz</code>——<strong>视觉字号</strong>（按小字与大字分别调校细节）</li>
+    <li><code>slnt</code>——<strong>倾斜</strong>（倾斜角度，单位为度）</li>
+    <li><code>ital</code>——<strong>意大利体</strong>（0 = 直立，1 = 意大利体）</li>
+  </ul>
+
+  <div class="callout key">
+    <span class="label">轴 tag 不是模块 6 那些特性 tag</span>
+    两者都是四字母 tag，很容易搞混。<strong>特性</strong> tag
+    （<code>liga</code>、<code>frac</code>——模块 6）是个<em>开关</em>：它住在 GSUB/GPOS 里，
+    要么触发要么不触发。<strong>轴</strong> tag（<code>wght</code>、<code>wdth</code>）是个
+    <em>旋钮</em>：你把它拧到范围内的任意一个<em>数</em>，轮廓就插值到对应的形状。
+    特性负责开启和关闭行为；轴让形状沿一条连续区间滑动。
+  </div>
+
+  <p>这套机制由四张表支撑——上面那些轴 tag 真正声明的地方就是 <code>fvar</code>：</p>
+  <table>
+    <tr><th class="mono">表</th><th>作用</th></tr>
+    <tr><td class="mono">fvar</td><td>声明轴及其范围，外加<em>具名实例</em>（"Bold"、"Condensed"）</td></tr>
+    <tr><td class="mono">gvar</td><td>TrueType 轮廓的逐字形点增量（CFF 一侧的对应物是 CFF2）</td></tr>
+    <tr><td class="mono">avar</td><td>可选的轴非线性重映射（让“50%”符合设计师想要的意思）</td></tr>
+    <tr><td class="mono">STAT</td><td>样式属性——具名实例之间的关系，供菜单与回退使用</td></tr>
+  </table>
+  <p>请求字重 550，渲染器就在母版之间对那个位置做<strong>插值</strong>——得到一款不存在于
+  任何独立文件中的字体。它与集合的对比非常鲜明：</p>
+  <table>
+    <tr><th>方案</th><th>如何提供多种样式</th><th>能有多少款</th></tr>
+    <tr><td>TTC / OTC</td><td>若干固定字体共享静态表</td><td>有限的、逐款设计好的一组</td></tr>
+    <tr><td>可变字体</td><td>一套母版 + 增量，运行时插值</td><td>无限多（一个连续空间）</td></tr>
+  </table>
+
+  <div class="callout key">
+    <span class="label">为什么我们的混合字体只能做集合，做不成可变字体</span>
+    正是这个岔路口把我们送上了 <code>.ttc</code> 分支。插值只在
+    <strong>点位兼容的母版</strong>之间成立——每个字形必须有同样的轮廓环、同样的点、
+    同样的顺序，渲染器才能把第 <em>k</em> 个点从细体位置滑到粗体位置。这只有在各样式是
+    <em>同一个</em>设计的两端时才成立。文楷和臻楷是
+    <strong>两个独立的字体设计</strong>——骨架不同，点数和点序也不同——
+    压根没有可供插值的<em>中间地带</em>；你没法把一个渐变成另一个。互不相关的
+    设计只能并排打包，这恰好是集合能做而可变字体
+    做不到的。回答<em>一个</em>家族的字重区间，可变字体是正解；面对<em>两个</em>
+    独立设计，集合不只是省事——它是唯一选项。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.2</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>TTC 对比可变字体。</strong>两者都能让一个文件提供多种样式。各用一句话说出
+    它们的核心机制，并说说什么场景该选哪个。</p>
+    <details><summary>看答案</summary>
+      <strong>TTC</strong>：若干<em>完整、固定</em>的字体打包在一起，靠 offset 共享完全相同的
+      静态表。适合手头已有一小批设计完毕的字体（或者像这里一样，
+      想把两款不相干的字体归成一组），希望它们低成本共存。
+      <strong>可变字体</strong>：一套母版轮廓，加上逐字形的<em>增量</em>
+      （<code>gvar</code>/CFF2），沿 <code>fvar</code> 里声明的轴分布；渲染器可以对任意位置
+      <em>插值</em>。适合想用最小的文件拿到一个连续设计空间
+      （100–900 任意字重、视觉字号）。TTC = 少数几款静态字体；
+      可变字体 = 无限多款插值出来的字体。
+    </details>
+  </div>
+
+  <h3>3 · 网页字体：WOFF 与 WOFF2</h3>
+  <p>这是最常见的误解，所以把话说明白：<strong>WOFF 和 WOFF2 不是
+  新的字体格式。</strong>它们只是把你已经熟悉的那套 sfnt 表
+  <em>压缩后包了一层</em>。WOFF1 用 zlib/Deflate；<strong>WOFF2 用 Brotli</strong>，
+  还能再小约 30%。浏览器把这层包装解压回一模一样的表模型，
+  然后像渲染 <code>.ttf</code> 一样渲染。轮廓、<code>cmap</code>、
+  度量，什么都没变。</p>
+  <p><strong>子集化</strong>是网页交付的另一半。
+  <code>pyftsubset</code> 之类的工具把页面用不到的字形（乃至整张表）丢掉，再把字体
+  重新生成一遍。对拉丁字体这算锦上添花；对 <strong>CJK 字体则是刚需</strong>——而我们自己的字体
+  正是典型样本。文楷一款就约 25 MB，几乎全是 <code>glyf</code> 里那
+  <code>numGlyphs = 46830</code> 个字形（模块 4）的轮廓。不做子集化直接挂到网页上，每位访客
+  都得下载约 25 MB，只为显示屏幕上实际出现的几百个字符。先子集化到只剩这些
+  字符，<em>再</em>做 WOFF2 压缩，下载量就缩到和页面一个量级——这也是为什么实践中 CJK
+  网页字体都按 <code>unicode-range</code> 切片、拆成许多小块提供
+  （“动态子集化”）。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.3</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>WOFF2 到底<em>是</em>什么？</strong>同事说“我们应该把字体重新导出成
+    面向网页的 WOFF2 轮廓格式”。WOFF2 是一种不同的轮廓技术吗？如果不是，它究竟
+    是什么，网页又为什么偏爱它？</p>
+    <details><summary>看答案</summary>
+      不是——WOFF2 根本不是什么轮廓技术。它是一层 <strong>Brotli 压缩的包装</strong>，
+      裹着一模一样的 sfnt 表（<code>glyf</code>/<code>loca</code> 或 CFF、<code>cmap</code>、
+      <code>hmtx</code>……）。浏览器把它解压回完全相同的表模型，像渲染任何 TTF/OTF 一样
+      渲染。网页偏爱它纯粹是为了传输体积：Brotli 加上面向字体的
+      预处理，让它比 WOFF1 再小约 30%，比裸 TTF 小得多，而且毫无质量
+      损失。“重新导出成 WOFF2”其实就是“把同一个字体压缩一下”。
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.4</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>为什么 CJK 尤其要子集化？</strong>子集化对任何网页字体都有用，但对 CJK
+    字体几乎是必选项。用你之前量出的字形数
+    （<code>numGlyphs = 46830</code>）解释原因。</p>
+    <details><summary>看答案</summary>
+      拉丁字体只有几百个字形；这款 CJK 字体有 <strong>46,830</strong> 个，仅
+      <code>glyf</code> 表就约 24.7 MB——轮廓主宰了整个文件。一个网页通常只显示
+      几百到几千个不同的字符，把 4.6 万多个字形全发过去，
+      几乎整个下载量都是浪费。<code>pyftsubset</code> 只保留真正用到的字形（和
+      表），把几十兆的下载变成页面级的大小。就算再叠上
+      WOFF2 的 Brotli，收益的大头也来自<em>压根不发送</em>那些用不到的字形。
+      （所以实践中 CJK 才有“动态子集化”/unicode-range 切片。）
+    </details>
+  </div>
+
+  <h3>4 · 栅格化——收尾闭环</h3>
+  <p>模块 3 交给你的是一套分辨率无关的轮廓：以字体单位表示的、由曲线上/曲线外点组成的
+  轮廓环。<strong>栅格化器</strong>——FreeType（Linux/Android）、Core Graphics（Apple）、
+  DirectWrite（Windows）——把这套轮廓按目标字号扫描转换成像素。这一路上：
+  <strong>hinting（渲染微调）</strong>和<strong>网格对齐</strong>把边缘推到像素网格上，
+  让小字号下的笔画依然锐利；<strong>抗锯齿</strong>（灰度，或利用
+  R-G-B 条纹的子像素/LCD 方式）把阶梯抹平。这就是把
+  <code>glyf</code> 表变成你眼前屏幕上这些字形的最后一步。</p>
+
+  <div class="callout">
+    <span class="label">旁注 · 当字形带上颜色</span>
+    上面的一切都假设字形是单色轮廓。颜色是与
+    <em>交付</em>正交的另一个维度，所以它不在本模块的主线上——但为求完整：字体也可以
+    为每个字形存储<strong>颜色</strong>，途径是几张相互竞争、各平台只部分买账的表。
+    <code>COLR</code>/<code>CPAL</code> 在调色板之上叠放矢量图层（缩放
+    不失真——Windows 的 emoji）；<code>sbix</code>（Apple）和 <code>CBDT</code>/<code>CBLC</code>（Google）
+    内嵌彩色<em>位图</em>；<code>SVG</code> 则为每个字形存一份完整的 SVG 文档。我们的文楷/臻楷
+    混合字体一张都没用——从头到尾都是单色轮廓——所以这只是背景知识，不属于
+    构建本身。
+  </div>
+
+  <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
+  <span class="section-tag walk">解读</span>
+  <h2>拆解 <code>LXGWHybrid.ttc</code></h2>
+
+  <p>我们一路构建的这个集合——两只源字体重贴标签变成九个家族（模块 5），
+  再打包进一个文件——是绝佳的解剖标本，因为它就是整门课程的实体化。
+  它的头部以集合魔数 <code>"ttcf"</code> 开头，装着 <strong>9 个家族共 18 款
+  字体</strong>，体积<strong>约 42 MB</strong>——几乎正好等于<em>两只</em>
+  源字体之和（文楷约 25 MB + 臻楷约 17 MB），而<em>不是</em>单只字体的九倍。</p>
+
+  <p>为什么？因为这 18 款字体从头到尾只引用<strong>两</strong>套轮廓。九个
+  Regular 款全部复用文楷的 <code>glyf</code>，九个 Bold 款全部复用臻楷的。
+  表目录里的 offset 直接证明了这一点。</p>
+
+  <div class="callout proof">
+    <span class="label">shareTables，用 offset 证明</span>
+    全部 18 款字体里只有<strong>两个不同的 <code>glyf</code> offset</strong>：
+    <ul>
+      <li><code>glyf @ 368</code>——由字款 <code>[0,2,4,6,8,10,12,14,16]</code> 共享
+        （9 个 Regular 款，文楷轮廓）。</li>
+      <li><code>glyf @ 25848192</code>——由字款 <code>[1,3,5,7,9,11,13,15,17]</code> 共享
+        （9 个 Bold 款，臻楷轮廓）。</li>
+    </ul>
+    九个表目录指向的是同一段轮廓字节。相比之下，<code>name</code> 表
+    <strong>每款各有一个 offset</strong>——那点每家族独有的小块元数据，是
+    <em>唯一</em>被复制的东西。
+  </div>
+
+  <p>沿三款相邻的字体走一遍，感受这个规律：</p>
+  <table>
+    <tr><th>字款</th><th>家族（name id 1）</th><th>子家族</th><th class="mono">glyf offset</th></tr>
+    <tr><td>0</td><td>LXGW WenKai ZhenKai Mono GB</td><td>Regular</td><td class="mono">368</td></tr>
+    <tr><td>1</td><td>LXGW WenKai ZhenKai Mono GB</td><td>Bold</td><td class="mono">25848192</td></tr>
+    <tr><td>2</td><td>LXGW WenKai</td><td>Regular</td><td class="mono">368</td></tr>
+  </table>
+  <p>字款 2 挂的家族名和字款 0 <em>不是同一个</em>，它的轮廓却落在
+  <strong>同一个 offset 368</strong> 上——字面意义上就是同一段文楷字节。九个家族名，两套
+  轮廓，一个文件。</p>
+  <p class="legend">这里的数字（18 款字体、精确的 offset <code>368</code> /
+  <code>25848192</code>、九个家族名）来自一次参考构建；如果你自己组装这个
+  集合，具体的字节偏移会不一样，但不变量不会变——你仍然
+  只会找到<strong>两个</strong>不同的 <code>glyf</code> offset，每只源字体一个。</p>
+
+  <div class="callout key">
+    <span class="label">整门课，一句话</span>
+    我们的构建只靠重贴元数据标签就生成 18 款内存中的字体
+    （<strong>模块 5</strong>：<code>name</code>/<code>OS/2</code>/<code>head</code>/<code>post</code>），
+    让 <code>glyf</code>/<code>cmap</code>/<code>hmtx</code> 保持逐字节相同
+    （<strong>模块 1</strong> 的表独立性；<strong>模块 3–4</strong> 的轮廓和度量
+    原封不动）。然后 <code>TTCollection.save(shareTables=True)</code> 把这些完全相同的大表
+    合并成一份（<strong>模块 7</strong>），于是 9 个家族只花约 2 个字体的磁盘。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.5</span><span class="x-kind code">编程题</span></div>
+    <p><strong>亲手证明 <code>shareTables</code>。</strong>不需要那个 18 款字体的混合版——
+    去重机制在一个用现成字体搭出来的<em>最小</em>集合里就能看到，而且搭它
+    不需要重贴标签（那是模块 5 的元数据活儿；这里只关心轮廓字节）。用
+    fontTools 跑两组实验：</p>
+    <ol>
+      <li>把<strong>两只不同的</strong>字体——文楷和臻楷——装进一个
+        <code>TTCollection</code>，<code>save(shareTables=True)</code>，重新打开，打印每款字体的
+        <code>glyf</code> offset。</li>
+      <li>把<strong>同一只</strong>字体装<em>两次</em>，重复同样的操作。</li>
+    </ol>
+    <p>两种情况各出现几个不同的 <code>glyf</code> offset？同字体装两次得到的
+    <code>.ttc</code>，体积和单只源字体比起来如何？</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      <code>c = TTCollection(); c.fonts = [TTFont(a), TTFont(b)]; c.save(path, shareTables=True)</code>。
+      用 <code>TTCollection(path)</code> 重新打开，遍历 <code>coll.fonts</code>，直接从每款字体的
+      表目录记录里读 offset：<code>sub.reader.tables['glyf'].offset</code>——
+      不需要反编译轮廓。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      <strong>两只不同的字体 → 两个不同的 offset</strong>（如 <code>[304, 25847976]</code>）——
+      没有可共享的东西。<strong>同一只字体装两次 → 一个共享 offset</strong>（如 <code>[304, 304]</code>），
+      而且 <code>.ttc</code> 约是单只字体的 1 倍而非 2 倍——完全相同的 <code>glyf</code> 只存
+      一份，两个表目录都指向它。把 2 款放大到 18 款就是那个混合字体：9 个
+      Regular 款共享文楷的轮廓，9 个 Bold 款共享臻楷的，总共两个不同的 offset。
+      （你的具体 offset 数字会和解读里的 <code>368</code> 不同——头部大小
+      不一样——但不同 offset 的<em>个数</em>是不变量。）
+    </details>
+    <p class="check-note">把你的两组 offset 列表贴给 AI 导师，让它核对：同字体那组共享、
+    双字体那组不共享。</p>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">7.6</span><span class="x-kind concept">综合题</span></div>
+    <p><strong>综合题——用你自己的话讲清整个混合字体。</strong>不用读任何代码：把
+    模块 1–7 学到的东西串成一个故事，讲两只不相干的字体如何变成
+    一个混合家族。(a) 列出重贴标签改动的<em>每一张</em>表并说明原因；(b) 指出它唯一
+    不碰的那类表，以及为什么这很关键；(c) 从头到尾追一遍“在家族 X 里请求粗体
+    → 得到真正的臻楷笔画”到底是怎么发生的，引用模块 1、4、5、7。</p>
+    <details><summary>看参考答案</summary>
+      <p><strong>(a) 重贴标签改动的表</strong>——四张小小的元数据表，别无其他：</p>
+      <ul>
+        <li><code>name</code>——重写 id 1（家族名）、2（子家族名 = "Regular"/"Bold"）、
+          3（唯一 ID）、4（全名）、6（PostScript 名），并<em>删除</em> id 16/17
+          （排印家族/子家族名）。正是这一步让两只文件声称<em>同一个</em>
+          家族、<em>不同的</em>子家族，操作系统才会把它们归进一个
+          Regular+Bold 家族。id 3/6 逐别名做成唯一，免得 CoreText 把某个
+          文件和另一个文件、或和原版字体判作重复而去重（模块 5）。</li>
+        <li><code>OS/2</code>——设置 <code>usWeightClass</code>（400 Regular / 700 Bold），
+          “请求粗体”实际选中的就是它；在 BOLD
+          （0x20）和 REGULAR（0x40）两个位之间翻转 <code>fsSelection</code>；再为名字带 Mono 的
+          家族设置 <code>panose.bProportion</code>（9 Monospaced /
+          3 Modern）。</li>
+        <li><code>head</code>——把 <code>macStyle</code> 的 BOLD 位设置得与
+          <code>fsSelection</code> 一致（渲染器会交叉核对这两处；它们必须一致）。</li>
+        <li><code>post</code>——设置 <code>isFixedPitch</code>，让终端的字体选择器肯把
+          Mono 家族当等宽字体接受——这只是个<em>对外宣称</em>的旗标，没有任何宽度
+          被改动。</li>
+      </ul>
+      <p><strong>(b) 它从不碰的那类表：</strong>轮廓/度量数据——
+      <code>glyf</code>/<code>loca</code>（轮廓，模块 3）、<code>cmap</code>（模块 2）、
+      <code>hmtx</code>（前进宽度，模块 4）。它刻意不挪动、不重画<em>任何东西</em>。
+      这很关键，原因有二：(1) 两只字体的 CJK 前进宽度本来就是整整一个 em
+      （<code>一</code> = 1000/1000 em，模块 4 证明过的那条等式——所以不需要重新调
+      度量，粗体的列照样对齐）；(2) 让这些表在
+      同源的每款字体之间保持逐字节相同，正是
+      <code>TTCollection.save(shareTables=True)</code> 能把它们只存<em>一份</em>的前提（模块 7）。动了
+      <code>glyf</code> 还会破坏磁盘上的 4 字节对齐，让共享落空。</p>
+      <p><strong>(c) “在家族 X 里请求粗体 → 真正的臻楷笔画”，从头到尾：</strong></p>
+      <ol>
+        <li>对九个家族名中的每一个，各拿一份文楷副本标成该家族的 Regular
+          （字重 400），一份臻楷副本标成它的 Bold（字重 700）——<code>name</code>
+          id 1 里是同一个家族名，<code>name</code> id 2 + <code>OS/2.usWeightClass</code> +
+          <code>fsSelection</code>/<code>macStyle</code> 里是不同的子家族/字重（模块 5 的重贴标签）。</li>
+        <li>全部 18 款字体打进一个 <code>.ttc</code>，带上 <code>shareTables=True</code>；
+          因为轮廓表从未被改动，9 个 Regular 款在同一个 offset 上共享文楷的
+          <code>glyf</code>，9 个 Bold 款在另一个 offset 上共享臻楷的——正是我们证明过的那
+          两个不同 offset（模块 1 与 7）。</li>
+        <li>运行时，应用请求家族 "X" 并要求粗体。CoreText / DirectWrite /
+          fontconfig 按烧进文件的家族名把各文件归组，再挑出
+          <code>usWeightClass</code>/样式位标着 Bold 的那款——也就是从臻楷改出来的字体。</li>
+        <li>渲染器顺着这款字体的表目录走（模块 1），seek 到它的 <code>glyf</code>
+          offset——物理上指向的就是臻楷的轮廓——然后栅格化。用户
+          看到的是货真价实、更重的臻楷笔画，不是算法伪造的假粗体，而且列依然对齐，
+          因为前进宽度从未被动过（模块 4）。</li>
+      </ol>
+      <p>所以整个效果只靠改四张小元数据表，再借助
+      容器独立性 + offset 共享——从头到尾没画过一个字形。</p>
+    </details>
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="7">标记本模块完成</button>
+
+  <div class="pager">
+    <a class="prev" href="06-shaping.zh.html"><span class="dir">←</span><span class="ttl">06 · 整形与布局</span></a>
+    <a class="next" href="../index.zh.html"><span class="dir">下一模块 →</span><span class="ttl">首页 · 你学完了 🎉</span></a>
+  </div>
+
+  <div class="callout">
+    <span class="label">你学完了整门课</span>
+    祝贺——现在任何字体你都能打开读懂：头部、表目录、<code>cmap</code>、
+    轮廓、度量、身份信息、整形表、打包方式，而且你精确地理解了“重贴标签
+    再打包”如何把两只不相干的字体变成一个混合家族。想亲手复现本教程里的
+    每一个数字，拿 <code>specimens/extract.py</code> 跑一遍那两只样本字体；想构建
+    混合 <code>.ttc</code>，对每只源字体做模块 5 的重贴标签，再用
+    <code>TTCollection.save(shareTables=True)</code> 打包。这个混合字体真正的组装脚本在
+    <a href="https://github.com/Frefreak/lxgw-wenkai-zhenkai">Frefreak/lxgw-wenkai-zhenkai</a>
+    （<code>build.py</code>），想看这套流程背后的确切代码就去那里。字节才是事实的
+    最终来源——去核对它们吧。
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

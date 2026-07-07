@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>吃透字体文件</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <div class="hero">
+    <p class="eyebrow">动手实践教程</p>
+    <h1>吃透字体文件</h1>
+    <p class="lede">一个字节一个字节地弄清楚字体文件是怎么造出来的——从包住一切的二进制容器，
+    到字形、度量、整形，再到字体集合与可变字体。每个结论都取自磁盘上两只真实的字体文件，
+    没有一处含糊带过。</p>
+  </div>
+
+  <div class="callout proof">
+    <span class="label">工作台上的标本</span>
+    我们解剖 <strong>霞鹜文楷等宽 GB</strong>（LXGW WenKai Mono GB）和
+    <strong>霞鹜臻楷 GB</strong>（LXGW ZhenKai GB），以及一路上用它们拼装出来的混合
+    <code>.ttc</code>。课程里的任何数字都可以用 <code>specimens/extract.py &lt;font&gt;</code>
+    复现；完整的核验数据集见 <code>specimens/SPECIMENS.md</code>。
+  </div>
+
+  <h2>模块一览</h2>
+  <div class="card-grid">
+    <a class="card" href="modules/01-sfnt-container.zh.html"><span class="cnum">01</span>
+      <div class="ctitle">sfnt 容器</div>
+      <div class="cq">字体文件是怎么摆放的？头部 + 表目录 + 偏移。</div></a>
+    <a class="card" href="modules/02-cmap-glyphs.zh.html"><span class="cnum">02</span>
+      <div class="ctitle">cmap 与字形 ID</div>
+      <div class="cq">字符码如何变成字形。编码与各种子表格式。</div></a>
+    <a class="card" href="modules/03-outlines.zh.html"><span class="cnum">03</span>
+      <div class="ctitle">轮廓</div>
+      <div class="cq">字形是怎么画出来的——二次 glyf 与三次 CFF、复合字形、hinting。</div></a>
+    <a class="card" href="modules/04-metrics.zh.html"><span class="cnum">04</span>
+      <div class="ctitle">度量与 em</div>
+      <div class="cq">前进宽度、侧边距、基线。为什么全角汉字恰好宽一 em。</div></a>
+    <a class="card" href="modules/05-families.zh.html"><span class="cnum">05</span>
+      <div class="ctitle">身份与家族</div>
+      <div class="cq">name / OS/2 / head——操作系统怎么把几份文件归成一个家族。</div></a>
+    <a class="card" href="modules/06-shaping.zh.html"><span class="cnum">06</span>
+      <div class="ctitle">整形与布局</div>
+      <div class="cq">GSUB / GPOS、OpenType 特性、连字、HarfBuzz。</div></a>
+    <a class="card" href="modules/07-packaging.zh.html"><span class="cnum">07</span>
+      <div class="ctitle">打包与前沿</div>
+      <div class="cq">TTC 与共享表、子集化、可变字体与彩色字体、WOFF2。</div></a>
+  </div>
+
+  <h2>怎么用这份教程</h2>
+  <ul>
+    <li>每个模块分三部分：<span class="section-tag concept">概念</span>
+      <span class="section-tag walk">解读</span>（对着真实字节逐段拆解），以及
+      <span class="section-tag ex">练习</span>。</li>
+    <li>练习分<strong>概念题</strong>和<strong>编程题</strong>。先自己做，
+      再把答案或输出贴给你的 AI 导师核对。部分练习附有可折叠的提示或参考答案。</li>
+    <li>点击页面底部的 <span class="kbd">标记本模块完成</span> 记录进度（存在你的浏览器里）。</li>
+  </ul>
+
+  <div class="callout">
+    <span class="label">环境准备（可选，但建议）</span>
+    要做编程练习，手边得有这两只源字体，外加装了 <code>fonttools</code> 的 Python。
+    仓库已在 <code>specimens/fonts/</code> 里带上两只字体（Git LFS）；也可以从 LXGW 的
+    GitHub releases 下载。前几个模块的不少练习只需要 <code>xxd</code> 和一个十六进制计算器。
+  </div>
+
+  <p style="margin-top:34px"><a class="card" style="display:inline-block" href="modules/01-sfnt-container.zh.html">
+    <span class="cnum">开始 →</span><div class="ctitle">模块 01 · sfnt 容器</div></a></p>
+</main>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02 · cmap 与字形 ID</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">模块 02</p>
+  <h1>cmap 与字形 ID</h1>
+  <p class="lede">字体并不认识“字母”。它内部只认
+  <em>字形 ID</em>——<code>0 … numGlyphs−1</code> 范围内的小整数。<code>cmap</code> 表就是
+  从你文本中的 Unicode 码位通往这些数字的桥梁。它是文本变成像素的<strong>第一</strong>步，
+  而且刻意只做第一步。</p>
+  <p class="legend">练习<strong>穿插</strong>在正文里——读到哪道做哪道，做完把你的
+  答案/输出贴给 AI 导师。提示与自查答案都可以折叠展开。</p>
+
+  <!-- ───────────────────────── CONCEPT 1 ───────────────────────── -->
+  <span class="section-tag concept">概念</span>
+  <h2>一个字符如何变成字形</h2>
+
+  <p>字体能画的每样东西都由一个<strong>字形 ID</strong>（常写作“GID”）标识：一个
+  <code>0</code> 到 <code>numGlyphs−1</code> 之间的整数。这款字体的 <code>numGlyphs</code> 是
+  <strong>46830</strong>，所以合法的 GID 是 <code>0 … 46829</code>。对任何
+  sfnt 字体，有两条铁律：</p>
+  <ul>
+    <li><strong>字形 0 永远是 <code>.notdef</code></strong>——“缺字字形”，通常画成
+      一个空框或带叉的方框（俗称<em>豆腐</em>块）。它的存在保证了“没有字形”时也有东西可画。</li>
+    <li><strong>传给字体的文本是 Unicode 码位</strong>（<code>U+0041</code>、<code>U+4E00</code>……），
+      不是字形 ID。总得有个东西负责翻译，这个东西就是 <code>cmap</code>。</li>
+  </ul>
+
+  <p>所以渲染器拿到 <code>"A一"</code> 后干的第一件事，就是把每个码位拿去查
+  <code>cmap</code>，换成字形 ID，之后的每个阶段（轮廓、
+  度量、定位）用的都是这些 ID。心智模型如下，用的是这款字体真实的字形 ID：</p>
+
+<pre><code>"A"  → U+0041 ──cmap──▶ GID 1     ──glyf──▶ outline ──hmtx──▶ width
+"一" → U+4E00 ──cmap──▶ GID 3171  ──glyf──▶ outline ──hmtx──▶ width</code></pre>
+
+  <div class="callout key">
+    <span class="label">可迁移的洞见</span>
+    <code>cmap</code> 是一次<strong>纯查表：码位 → 字形 ID</strong>，一进一出，没有
+    上下文。它看不到相邻的字符。所以一切依赖上下文的事——把
+    <code>f</code>+<code>i</code> 合成 <em>fi</em> 连字、挑选位置变体、换上
+    风格替代字形——都发生在<strong>更后面</strong>的整形引擎里，由 <code>GSUB</code>/<code>GPOS</code>
+    完成（模块 6）。把这条边界记牢：<code>cmap</code> 回答“这个字符是哪个字形”，
+    整形回答“结合前后这一串文本，实际该用哪些字形、摆在哪里”。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.1</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>那个特殊的字形。</strong>为什么字形 ID <code>0</code> 特殊？当某个码位在
+    <code>cmap</code> 里没有条目时，屏幕上会出现什么？</p>
+    <details><summary>看答案</summary>
+      每个 sfnt 字体都把字形 ID 0 保留给 <code>.notdef</code>——钦定的“缺字字形”。
+      当你请求一个字体没有映射的码位时，查表得到 GID 0（或者查不到条目，按
+      GID 0 处理），渲染器于是画出 <code>.notdef</code>：通常是一个空矩形或带叉的矩形，也就是
+      <strong>豆腐</strong>块。它传达的信息是“这款字体没有那个字符的字形”——文本和
+      编码都没问题，缺的是字符覆盖。
+    </details>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.2</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>cmap 到哪儿为止，整形从哪儿开始。</strong>比较预组合的单个字符
+    <code>ﬁ</code>（<code>U+FB01</code>，“fi”连字）和依次输入
+    <code>f</code> + <code>i</code> 两个字符。哪一个由 <code>cmap</code> 解决，哪一个需要
+    整形引擎？说明这条边界。</p>
+    <details><summary>看答案</summary>
+      <code>U+FB01</code> 是一个真实的码位，所以 <code>cmap</code> 直接把它映射到那个 fi
+      连字字形——一次查表，完事。而先打 <code>f</code> 再打 <code>i</code> 得到的是
+      <em>两个</em>码位（<code>U+0066</code>、<code>U+0069</code>）；<code>cmap</code> 把它们各自独立地映射到
+      各自的字形，因为 <code>cmap</code> 根本没有“这俩挨着”的概念。
+      把它们合成一个连字字形是一个<strong>依赖上下文</strong>的决定，这是整形阶段
+      <code>GSUB</code>（<code>liga</code> 特性）的活儿。边界就在这里：
+      <code>cmap</code> = 无上下文的字符→字形；整形 = 依赖上下文的字形→字形（可多个）。
+      <strong>模块 6</strong> 会展开讲。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── CONCEPT 2 ───────────────────────── -->
+  <span class="section-tag concept">概念</span>
+  <h2>一张表，多张子表</h2>
+  <p><code>cmap</code> 表不是单一的映射，而是一列<strong>子表</strong>，每张
+  子表声明自己面向的受众和使用的编码。原因是历史性的：不同平台想要不同的
+  字符编码，OpenType 的选择是把几套映射打包进同一张表，而不是钦点
+  一个赢家。每张子表声明：</p>
+  <ul>
+    <li>一对 <strong>(platformID, encodingID)</strong>——这张子表<em>给谁</em>用；</li>
+    <li>一个 <strong>format</strong>——码位→GID 的数据<em>怎么</em>编码。</li>
+  </ul>
+  <p>渲染器扫一遍子表，从<em>自己</em>看得懂的里面挑最好的一张。</p>
+
+  <h3>platformID 与 encodingID</h3>
+  <table>
+    <tr><th>platformID</th><th>平台</th><th>常见 (plat, enc) 组合</th></tr>
+    <tr><td class="mono">0</td><td>Unicode</td><td class="mono">(0,4) / (0,6) = 完整 Unicode</td></tr>
+    <tr><td class="mono">1</td><td>Macintosh（历史遗留）</td><td class="mono">(1,0) = Mac Roman</td></tr>
+    <tr><td class="mono">3</td><td>Windows</td><td class="mono">(3,1) = BMP，(3,10) = 完整 Unicode</td></tr>
+  </table>
+  <p>这里面<strong>没有 Linux 的平台 ID</strong>——这个枚举比 Linux 桌面文本出现得还早。Linux
+  （FreeType/HarfBuzz/fontconfig）、macOS（CoreText）和 Windows（DirectWrite）其实都只是读一张
+  <em>Unicode</em> cmap，而且实践中全都收敛到了 Windows 平台的 <code>(3,10)</code>
+  子表。这里的“Windows”实际上就是“大家都在用的那个标准”。</p>
+
+  <h3>子表格式</h3>
+  <table>
+    <tr><th>format</th><th>覆盖范围</th><th>是什么</th></tr>
+    <tr><td class="mono">0</td><td>256 个码位</td><td>迷你的历史遗留字节表（每字符一个字节）</td></tr>
+    <tr><td class="mono">4</td><td>BMP，<code>U+0000…U+FFFF</code></td><td><strong>分段式</strong> 16 位映射</td></tr>
+    <tr><td class="mono">6</td><td>一段连续的 16 位区间</td><td>“裁剪数组”，一整段稠密映射</td></tr>
+    <tr><td class="mono">12</td><td>完整 32 位，全部 17 个平面</td><td><strong>分段式</strong> 32 位映射</td></tr>
+    <tr><td class="mono">14</td><td>变体选择符</td><td>Unicode 变体序列（Variation Sequences）</td></tr>
+  </table>
+  <p>今天真正要紧的是两种：<strong>format 4</strong>（基本多文种平面——头
+  65,536 个码位——的主力）和 <strong>format 12</strong>（把同一套
+  分段思路扩展到完整的 32 位空间，从而够得着 <code>U+FFFF</code> 之上的
+  补充平面）。format 0 和 6 是覆盖面很窄的历史遗留编码；format 14 根本不映射
+  字符——它处理的是“用那个字符的<em>这个</em>变体”这类序列。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.3</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>读懂子表的标签。</strong>某张子表声明
+    <code>(platformID=3, encodingID=10, format=12)</code>。说出它面向谁、能寻址的码位范围
+    是什么。</p>
+    <details><summary>看答案</summary>
+      platformID 3 = <strong>Windows</strong>；encodingID 10 = 完整 Unicode。format 12 是
+      <strong>分段式 32 位</strong>格式，因此能映射整个 Unicode 空间——
+      从 <code>U+0000</code> 到 <code>U+10FFFF</code>，全部 17 个平面——而不止 16 位的 BMP。在这款
+      字体里，这张子表映射了 46510 个码位。
+    </details>
+  </div>
+
+  <!-- ───────────────────────── WALKTHROUGH ───────────────────────── -->
+  <span class="section-tag walk">解读</span>
+  <h2>文楷的真实 cmap</h2>
+
+  <p>下面是霞鹜文楷等宽 GB（LXGW WenKai Mono GB）——<code>LXGWWenKaiMonoGB-Regular.ttf</code>——货真价实的 <code>cmap</code>：五张子表。
+  <code>nMappings</code> 是每张子表映射的码位数量。</p>
+
+  <table class="mono">
+    <tr><th>platformID</th><th>platEncID</th><th>format</th><th>nMappings</th><th>是什么</th></tr>
+    <tr><td>0</td><td>3</td><td>4</td><td>43498</td><td>Unicode 平台，仅 BMP（16 位）</td></tr>
+    <tr><td>0</td><td>4</td><td>12</td><td>46510</td><td>Unicode 平台，完整范围（32 位）</td></tr>
+    <tr><td>0</td><td>5</td><td>14</td><td>0</td><td>Unicode 变体序列（此处为空）</td></tr>
+    <tr><td>3</td><td>1</td><td>4</td><td>43498</td><td>Windows，BMP（16 位）</td></tr>
+    <tr><td>3</td><td>10</td><td>12</td><td>46510</td><td>Windows，完整 Unicode（32 位）</td></tr>
+  </table>
+
+  <p>逐行看：</p>
+  <ul>
+    <li><strong>(0,3) format 4</strong> 和 <strong>(3,1) format 4</strong> 都映射
+      <strong>43498</strong> 个码位——这款字体拥有的、落在 BMP
+      （<code>U+0000…U+FFFF</code>）内的全部字符。一张标给 Unicode 平台，一张标给 Windows——而且
+      后面逐字节细读时会看到，它们字面意义上指向<em>同一段字节</em>。</li>
+    <li><strong>(0,4) format 12</strong> 和 <strong>(3,10) format 12</strong> 都映射
+      <strong>46510</strong> 个码位——BMP 字符<em>加上</em> <code>U+FFFF</code> 之外的
+      所有字符（同样，一份共享字节挂着两个标签）。</li>
+    <li><strong>(0,5) format 14</strong> 映射 <strong>0</strong> 个：变体序列子表
+      存在，但不带任何序列，纯粹是个结构上的占位符。</li>
+  </ul>
+
+  <div class="callout key">
+    <span class="label">可迁移的洞见</span>
+    差值 <strong>46510 − 43498 = 3012</strong>，就是这款字体支持的、位于
+    16 位 BMP <em>之上</em>的字符数量。在<em>这款</em>字体里，它们是散落的特殊字符——注音修饰符、
+    古汉语标记、小假名——范围从 <code>U+107A5</code> 到 <code>U+FFFFD</code>。
+    （有点出人意料：作为一款 CJK 字体，它并<strong>不</strong>包含 <code>U+20000+</code> 的
+    CJK 扩展 B——覆盖范围永远要查证，不要想当然。）format 4 子表
+    在物理上不可能寻址其中任何一个：它的
+    码位是 16 位的。这就是字体要<em>同时</em>带一张 format 4 和一张
+    format 12 子表的全部原因。（另外注意 <code>numGlyphs</code> = 46830 &gt; 已映射的 46510 个码位——有些
+    字形没有任何码位指向它，比如 <code>.notdef</code> 和只在整形时用到的替代字形。）
+  </div>
+
+  <h3>映射示例</h3>
+  <p>最优 Unicode 子表解析出的结果（字形<em>名字</em>来自 <code>post</code>
+  表，列在这里只是方便人看）：</p>
+  <table class="mono">
+    <tr><th>码位</th><th>字符</th><th>字形名</th><th>GID</th></tr>
+    <tr><td>U+0041</td><td>A</td><td>"A"</td><td>1</td></tr>
+    <tr><td>U+4E00</td><td>一</td><td>"u4E00"</td><td>3171</td></tr>
+    <tr><td>U+6C38</td><td>永</td><td>"u6C38"</td><td>—</td></tr>
+    <tr><td>U+9FA5</td><td>龥</td><td>"u9FA5"（CJK 统一汉字基本区的最后一个）</td><td>—</td></tr>
+  </table>
+
+  <div class="callout">
+    <span class="label">名字是方便，ID 才是本体</span>
+    渲染器从不跟字符串 <code>"u4E00"</code> 打交道；<code>cmap</code> 返回的是字形
+    <em>ID</em>。名字放在 <code>post</code> 表里，纯粹是为了让工具和人有办法谈论
+    字形。fontTools 的 <code>getBestCmap()</code> 会自动选出最优的 Unicode 子表（这里是那张
+    format 12），交给你一个普通的 <code>{codepoint: glyphName}</code> 字典。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.4</span><span class="x-kind concept">概念题</span></div>
+    <p><strong>为什么两种格式都要带？</strong>这款字体带了一张 format 4 子表（43498 条映射）和一张
+    format 12 子表（46510 条映射），看上去大量冗余。为什么两张都留着？具体地说：
+    如果删掉 format 12 子表、只留 format 4，会坏掉什么？</p>
+    <details><summary>看答案</summary>
+      format 4 用 16 位码位，所以只能寻址 BMP（<code>≤ U+FFFF</code>）。<code>U+FFFF</code> 之上的
+      <strong>46510 − 43498 = 3012</strong> 个字符——这款字体携带的补充平面
+      特殊字符，比如 <code>U+16FE3</code>（一个古汉语标记）——将失去
+      映射。请求它们会得到 <code>.notdef</code>，渲染成<strong>豆腐块</strong>，
+      尽管字形明明就躺在字体里。正是 format 12 子表让这些字形
+      变得可达。
+    </details>
+  </div>
+
+  <h3>用 fontTools 查看字体</h3>
+  <p>接下来两道练习要动手，所以先给出最小工具集——<a
+  href="https://github.com/fonttools/fonttools">fontTools</a>，读写字体的标准
+  Python 库（模块 1 的 sfnt 解析它替你做了）：</p>
+<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+font = TTFont(path)              <span class="cmt"># open & parse the font</span>
+font[<span class="str">"cmap"</span>].tables           <span class="cmt"># list of subtables; each has .format, .platformID, .platEncID</span>
+sub.cmap                        <span class="cmt"># one subtable's {codepoint: glyphName} dict</span>
+font.getBestCmap()              <span class="cmt"># merged best-Unicode {codepoint: glyphName}</span>
+font.getGlyphID(name)           <span class="cmt"># glyph name -> integer GID</span></code></pre>
+  <p>用 <code>python</code> 跑就行。接下来两道练习需要的就这些；后面的
+  工具一节还会再往下挖一点。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.5</span><span class="x-kind code">编程题</span></div>
+    <p><strong>数一数只有 format 12 够得着的码位。</strong>统计出现在
+    format 12 子表、但<em>不在</em> format 4 子表中的码位数量——也就是
+    <code>cp &gt; 0xFFFF</code> 的那些。与上面两个 <code>nMappings</code> 的差值对比。</p>
+    <details><summary>提示</summary>
+      从 <code>font["cmap"].tables</code> 拿到原始子表。挑一张 <code>.format == 4</code>
+      和一张 <code>.format == 12</code>；每张都有一个以码位为键的 <code>.cmap</code> 字典。然后
+      做个集合差：<code>len(set(fmt12.cmap) - set(fmt4.cmap))</code>。预期 ≈ 46510 − 43498。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      <strong>3012</strong>。设 <code>t4</code>/<code>t12</code> 为 <code>font['cmap'].tables</code>
+      里的 format 4 和 format 12 子表：<code>len(set(t12.cmap) - set(t4.cmap))</code>，或者等价地
+      <code>sum(1 for cp in t12.cmap if cp &gt; 0xFFFF)</code>。两者都等于 46510 − 43498 = 3012。
+    </details>
+    <p class="check-note">自查见上——或把你的单行代码贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.6</span><span class="x-kind code">编程题</span></div>
+    <p><strong>把码位映射到字形名。</strong>用 fontTools 加载字体，调用
+    <code>getBestCmap()</code>，打印 <code>A</code>（U+0041）、<code>一</code>
+    （U+4E00），以及一个这款字体确实映射了的补充平面字符——例如 <code>𖿣</code>
+    （U+16FE3，一个古汉语标记）——的字形名。打印码位、字符和解析出的名字。然后是
+    真正的问题：仅凭返回的字典，你能对用了<em>哪张</em>子表下什么
+    结论——又有什么是你<strong>不能</strong>下的？<em>（预警：一个“显而易见”的选择，比如 <code>𠀀</code>
+    U+20000，会返回 <code>None</code>——这款 GB 字体不覆盖它。要验证，别想当然。）</em></p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      <code>getBestCmap()</code> 返回一个普通的 <code>{codepoint: glyphName}</code> 字典，所以每次查询
+      就是 <code>cmap.get(cp)</code>。只要出现任何 <code>cp &gt; 0xFFFF</code>，格式就暴露了
+      （format 4 物理上装不下它们）。但在断言是<em>哪一张</em>之前，先数一数
+      <code>[(t.platformID,t.platEncID,t.format) for t in font["cmap"].tables]</code> 里
+      有几张 format 12 子表——再试试 <code>best is font["cmap"].tables[i].cmap</code>，看对象同一性
+      帮不帮得上忙。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      <code>A</code> → "A"（gid 1）；<code>一</code> → "u4E00"（gid 3171）；<code>𖿣</code> U+16FE3 →
+      "oldchineseiterationmodhan"（gid 21286）。<br>
+      <strong>字典能告诉你的：</strong>这份映射是 <strong>format 12</strong>——它包含
+      <code>0xFFFF</code> 之上的码位（这里最大是 <code>U+FFFFD</code>），format 4 装不下，
+      空的 format 14 也提供不了。<br>
+      <strong>字典不能告诉你的：</strong>是<em>哪一张</em> format 12 子表。一共有两张，
+      <code>(0,4)</code> 和 <code>(3,10)</code>，内容完全相同——而且因为它们在磁盘上共享同一个
+      offset，fontTools 把它们去重成了<em>同一个字典对象</em>，于是连
+      <code>best is tables[(0,4)].cmap</code> 和 <code>best is tables[(3,10)].cmap</code> 都
+      <strong>双双为 True</strong>。这个结果是真正无法区分的。答案是
+      <code>(3,10)</code>，<em>仅仅</em>因为它在 fontTools 文档写明的偏好顺序
+      <code>cmapPreferences = (3,10),(0,6),(0,4),(3,1),…</code> 里排第一——这是关于算法的事实，不是
+      关于数据的。教训：字典只暴露<em>格式</em>，永远暴露不了平台对。
+    </details>
+    <p class="check-note">自查见上——或把你的代码和输出贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <!-- ───────────────────────── DEEP-DIVE A: the cmap index ───────────────────────── -->
+  <span class="section-tag binary">二进制细读</span>
+  <h2>第一步：cmap 自己也是个容器</h2>
+
+  <p>在解读任何 format 4 的字节之前，你得先<em>找到</em>它们。从模块 1 的表目录我们知道
+  <code>cmap</code> 表位于文件偏移 <strong>187808</strong>。但这张表开头并不是子表数据——而是
+  它<strong>自己的小目录</strong>：一个 4 字节的头部
+  （<code>version</code>、<code>numTables</code>），后面每张子表跟一条 8 字节的<strong>编码记录</strong>：
+  <code>(platformID, encodingID, offset)</code>，其中 <code>offset</code> 是
+  <em>从 cmap 表的起点</em>量起的。这又是模块 1 的老套路，只是往里多嵌套了一层。</p>
+
+  <p>下面是 <em>cmap 表</em>货真价实的头 44 个字节（头部 + 五条记录）：</p>
+<pre class="bytemap"><span class="b f0">00 00</span> <span class="b f1">00 05</span>   <span class="b f2">00 00 00 03</span> <span class="b f3">00 00 00 2c</span>   <span class="b f2">00 00 00 04</span> <span class="b f3">00 00 c3 ec</span>   <span class="b f2">00 00 00 05</span> <span class="b f3">00 03 4f f8</span>   <span class="b f2">00 03 00 01</span> <span class="b f3">00 00 00 2c</span>   <span class="b f2">00 03 00 0a</span> <span class="b f3">00 00 c3 ec</span></pre>
+
+  <table>
+    <tr><th class="mono">字节</th><th>字段</th><th>值</th></tr>
+    <tr><td class="mono">00 00</td><td>version</td><td class="mono">0</td></tr>
+    <tr><td class="mono">00 05</td><td>numTables</td><td class="mono">后跟 5 条编码记录</td></tr>
+  </table>
+  <table class="mono">
+    <tr><th>记录字节</th><th>(plat, enc)</th><th>offset</th><th>→ 子表格式</th></tr>
+    <tr><td>00 00 00 03 · 00 00 00 2c</td><td>(0, 3)</td><td>44</td><td>format 4</td></tr>
+    <tr><td>00 00 00 04 · 00 00 c3 ec</td><td>(0, 4)</td><td>50156</td><td>format 12</td></tr>
+    <tr><td>00 00 00 05 · 00 03 4f f8</td><td>(0, 5)</td><td>217080</td><td>format 14</td></tr>
+    <tr><td>00 03 00 01 · 00 00 00 2c</td><td>(3, 1)</td><td><strong>44</strong></td><td>format 4（offset 相同！）</td></tr>
+    <tr><td>00 03 00 0a · 00 00 c3 ec</td><td>(3, 10)</td><td><strong>50156</strong></td><td>format 12（offset 相同！）</td></tr>
+  </table>
+
+  <div class="callout key">
+    <span class="label">这段字节有两种读法，都重要</span>
+    <strong>（1）导航：</strong>要到达 format 4 的字节，用 cmap 表偏移
+    <code>187808</code> + 记录里的 <code>offset 44</code> = 文件偏移 <strong>187852</strong>。这是
+    知道子表在哪的<em>唯一</em>途径——它没有固定位置。<br>
+    <strong>（2）offset 共享：</strong>记录 <code>(0,3)</code> 和 <code>(3,1)</code> 携带的都是
+    <code>offset = 44</code>；<code>(0,4)</code> 和 <code>(3,10)</code> 携带的都是 <code>50156</code>。解读一节里
+    那些“重复平台”的子表并不是数据重复了——而是<em>同一张</em>
+    子表被两条记录引用。模块 7 的 TTC 玩的也是这一招。
+  </div>
+
+  <p>果不其然，偏移 44 处的 14 个字节，正是我们马上要拆解的 format 4 表头：</p>
+<pre class="bytemap"><span style="opacity:.55">…@ offset 44:</span> <span class="b f0">00 04</span> <span class="b f1">c3 c0</span> <span class="b f2">00 00</span> <span class="b f3">0b f8</span> <span class="b f4">08 00</span> <span class="b f0">00 0a</span> <span class="b f1">03 f8</span></pre>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.7</span><span class="x-kind code">编程题</span></div>
+    <p><strong>从原始字节解析 cmap 索引。</strong>用文件偏移 187808（来自模块 1），
+    读出 cmap 表的 <code>version</code> 和 <code>numTables</code>，再逐条读编码记录。
+    打印每条 <code>(platformID, encodingID, offset)</code>。<strong>哪些记录共享同一个 offset？</strong>
+    然后算出 <code>(3,1)</code> 子表的文件偏移，并确认那里开头两个字节解码出来
+    是 format <code>4</code>。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      以二进制方式读文件。cmap 头部是两个大端序 <code>uint16</code>
+      （<code>"&gt;HH"</code>）；每条记录是 <code>uint16, uint16, uint32</code>（<code>"&gt;HHI"</code>，8
+      字节）。记录里的 offset 相对于 cmap 表起点，所以子表的文件偏移是
+      <code>187808 + recordOffset</code>。到那里读 2 个字节，按 <code>uint16</code> 解包就是
+      format。（187808 可以自己按模块 1 的方式解析出来，也可以直接取
+      <code>TTFont(path).reader.tables['cmap'].offset</code>。）
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      <code>version=0, numTables=5</code>。记录：<code>(0,3)→44</code>、<code>(0,4)→50156</code>、
+      <code>(0,5)→217080</code>、<code>(3,1)→44</code>、<code>(3,10)→50156</code>。所以
+      <code>(0,3)</code> 和 <code>(3,1)</code> 共享 offset 44（<code>(0,4)</code> 和
+      <code>(3,10)</code> 共享 50156）。(3,1) 子表位于文件偏移
+      <code>187808 + 44 = 187852</code>，那里的第一个 <code>uint16</code> 是 <code>4</code>——一张
+      format 4 子表。
+    </details>
+    <p class="check-note">自查见上——或把你解析出的记录列表贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <!-- ───────────────────────── DEEP-DIVE B: format 4 ───────────────────────── -->
+  <h2>手工解析 format 4</h2>
+
+  <p>现在可以解码偏移 44 处的子表了。（想自己拿到某张子表的原始字节来做这种
+  手工解析：<code>raw = font['cmap'].tables[i].compile(font)</code> 会把子表重新序列化
+  成字节。）它的 14 字节表头：</p>
+
+  <table>
+    <tr><th class="mono">字节</th><th>字段</th><th>值</th><th>含义</th></tr>
+    <tr><td class="mono">00 04</td><td>format</td><td class="mono">4</td><td>分段式 16 位映射</td></tr>
+    <tr><td class="mono">c3 c0</td><td>length</td><td class="mono">50112</td><td>整张子表的字节长度</td></tr>
+    <tr><td class="mono">00 00</td><td>language</td><td class="mono">0</td><td>0 = 不区分语言</td></tr>
+    <tr><td class="mono">0b f8</td><td>segCountX2</td><td class="mono">3064</td><td>→ <strong>segCount = 1532</strong> 个分段</td></tr>
+    <tr><td class="mono">08 00</td><td>searchRange</td><td class="mono">2048</td><td rowspan="3">模块 1 那套二分查找三件套又来了——这次作用在 <code>endCode</code> 数组上。segCount 1532 → 2¹⁰=1024 → ×2=2048；log₂1024=10；2·1532−2048=1016。</td></tr>
+    <tr><td class="mono">00 0a</td><td>entrySelector</td><td class="mono">10</td></tr>
+    <tr><td class="mono">03 f8</td><td>rangeShift</td><td class="mono">1016</td></tr>
+  </table>
+
+  <div class="callout key">
+    <span class="label">老朋友又见面了</span>
+    你在模块 1 拆过的 <code>searchRange / entrySelector / rangeShift</code> 化石，
+    <em>被浇筑进了每一张 format 4 子表</em>——这次是用来在 <code>endCode</code>
+    数组里二分查找包含某个码位的分段。同一套把戏，同样的字段，换了个数组。
+  </div>
+
+  <h3>四个并排的数组</h3>
+  <p>14 字节表头之后，format 4 存放<strong>四个数组，每个 <code>segCount</code>
+  条</strong>（末尾还有一个字形索引数组），首尾相接地排布：</p>
+<pre><code>header(14)
+endCode[1532]        uint16  — last codepoint of each segment (sorted; last entry = 0xFFFF)
+reservedPad(2)       = 0
+startCode[1532]      uint16  — first codepoint of each segment
+idDelta[1532]        int16   — SIGNED add-constant for the segment
+idRangeOffset[1532]  uint16  — 0, or a byte-offset into glyphIdArray (the tricky bit)
+glyphIdArray[...]    uint16  — shared pool the idRangeOffsets point into</code></pre>
+
+  <p>这款字体真实的前六个分段（一个分段就是横跨四个数组的一行）：</p>
+  <table class="mono">
+    <tr><th>seg</th><th>startCode</th><th>endCode</th><th>idDelta</th><th>idRangeOffset</th><th>覆盖</th></tr>
+    <tr><td>0</td><td>0x0020</td><td>0x002f</td><td>0</td><td>3064</td><td>空格 … '/'</td></tr>
+    <tr><td>1</td><td>0x0030</td><td>0x0039</td><td>210</td><td>0</td><td>数字 0–9</td></tr>
+    <tr><td>2</td><td>0x003a</td><td>0x007e</td><td>0</td><td>3092</td><td>':' … '~'（含 A–Z、a–z）</td></tr>
+    <tr><td>3</td><td>0x00a0</td><td>0x00ac</td><td>0</td><td>3228</td><td>Latin-1 标点</td></tr>
+    <tr><td>4</td><td>0x00ae</td><td>0x02b0</td><td>0</td><td>3252</td><td>拉丁扩展……</td></tr>
+    <tr><td>5</td><td>0x02b2</td><td>0x02b3</td><td>0</td><td>4280</td><td>修饰字母</td></tr>
+    <tr><td>…</td><td>…</td><td>…</td><td>…</td><td>…</td><td></td></tr>
+    <tr><td>1531</td><td>0xffff</td><td>0xffff</td><td>—</td><td>—</td><td>必需的 0xFFFF 哨兵</td></tr>
+  </table>
+  <p>每张 format 4 子表<strong>必须</strong>以一个 <code>endCode</code> 为
+  <code>0xFFFF</code> 的分段收尾——正是这个哨兵保证“找第一个 <code>endCode ≥ c</code>”的查找
+  一定会终止。</p>
+
+  <h3>查表算法</h3>
+  <ol class="steps">
+    <li>在 <code>endCode</code> 里二分查找第一个满足
+      <code>endCode[i] ≥ c</code> 的分段 <code>i</code>。（三件套就是在这一步挣饭吃的。）</li>
+    <li>如果 <code>c &lt; startCode[i]</code>，码位落在缝隙里 → <strong>字形 0（.notdef）</strong>。</li>
+    <li>如果 <code>idRangeOffset[i] == 0</code>（简单路径）：
+      <code>gid = (c + idDelta[i]) &amp; 0xFFFF</code>。整个分段是一段连续的字形区间。</li>
+    <li>否则（指针路径）：字形 ID 住在 <code>glyphIdArray</code> 里，而
+      <code>idRangeOffset[i]</code> 是一个<strong>从它自己所在槽位量起的字节偏移</strong>，指进那个
+      数组。然后再加 <code>idDelta</code>。</li>
+  </ol>
+
+  <h3>两次完整的手算查表（都验证过）</h3>
+
+  <p><strong>简单路径——<code>一</code>（U+4E00）。</strong>它落在一个
+  <code>idDelta = −16797</code>、<code>idRangeOffset = 0</code> 的分段里：</p>
+<pre><code>gid = (0x4E00 + (−16797)) &amp; 0xFFFF
+    = (19968 − 16797) &amp; 0xFFFF
+    = 3171                       → glyph "u4E00"  ✓</code></pre>
+  <p>（数字同理：<code>'0'</code> U+0030 在分段 1 →
+  <code>(48 + 210) = 258</code>。）带符号的 <code>idDelta</code> 说白了就是“这一段码位映射到
+  平移了一个常数的一段字形 ID”——又省又密。</p>
+
+  <p><strong>指针路径——<code>A</code>（U+0041）。</strong>它在分段 2
+  （<code>startCode=0x3a</code>、<code>idDelta=0</code>、<code>idRangeOffset=3092</code>）。规范给的
+  公式算出的是子表内部的一个<em>字节地址</em>：</p>
+<pre><code>addr = idRangeOffset[i]  +  2·(c − startCode[i])  +  &amp;idRangeOffset[i]
+     = 3092              +  2·(65 − 58)           +  9212
+     = 12318
+glyphIdArray @ 12318 = 1 ,  + idDelta(0)         = gid 1   → glyph "A"  ✓
+(cross-checked: font.getGlyphID('A') == 1)</code></pre>
+
+  <div class="callout warn">
+    <span class="label">“从自己槽位量起的偏移”这个怪胎是怎么来的</span>
+    <code>idRangeOffset</code> 是整个 OpenType 里最让人犯迷糊的东西，它是 <strong>C
+    指针运算</strong>的化石。在最初的 C 代码里，<code>glyphIdArray</code> 在内存中紧跟
+    在 <code>idRangeOffset</code> 后面，于是
+    <code>*(&amp;idRangeOffset[i] + idRangeOffset[i]/2 + (c − startCode[i]))</code> 顺理成章地就
+    伸了进去。把偏移编码成<em>相对于数组槽位自身</em>，让 90 年代的代码一次
+    指针加法就能到位，连基址都不用另存。这份小聪明的账我们一直付到今天，付的是困惑——
+    这也正是下一个格式把它扔掉的原因。
+  </div>
+
+  <h3>为什么长成这样——编码器的视角</h3>
+  <p>一旦你换成<em>写出</em>这张表的工具的思路，这个格式就不再显得莫名其妙。
+  编码器手里有一堆（码位 → 字形 ID）对，想要最小的编码。它把码位分组成
+  连续的分段，每个分段在两种表示里挑便宜的那种：</p>
+  <table>
+    <tr><th>区间内的码位</th><th>对应的字形 ID</th><th>选用的编码</th></tr>
+    <tr><td>连续</td><td>也连续（<code>c + k</code>）</td><td><strong>只用 idDelta</strong>——存一个常数 <code>k</code>，没有逐字形数据</td></tr>
+    <tr><td>连续</td><td>散乱</td><td><strong>glyphIdArray</strong>——把 ID 逐个列出来；<code>idRangeOffset</code> 指向这份列表</td></tr>
+    <tr><td>内部有洞</td><td>—</td><td><strong>glyphIdArray</strong>，未映射的码位填 <code>0</code></td></tr>
+  </table>
+  <p>所以 <code>idDelta</code> 是常见情形（一整块字形按码位顺序排布）的<em>压缩捷径</em>，
+  <code>glyphIdArray</code> 是 ID 对不齐时的
+  <em>兜底</em>。一个分段不能两头都占，所以才有两套机制。</p>
+
+  <h4>连成一条的带子（为什么 <code>idRangeOffset</code> 是“从自己槽位量起”）</h4>
+  <p><code>idRangeOffset[]</code> 和 <code>glyphIdArray[]</code> 是一整段连续的
+  <code>uint16</code> 单元——<code>glyphIdArray</code> 只是它的尾巴。每个非零的
+  <code>idRangeOffset</code> 单元都是一支<strong>射向尾巴的箭，从它自己量起</strong>。
+  一个玩具分段，把 <code>A,B,C</code> 映射到不连续的字形 <code>10, (hole), 25</code>：</p>
+<pre>            ┌ idRangeOffset[] ┐ ┌───────── glyphIdArray[] ─────────┐
+ slot:          0         1         2         3         4
+            ┌─────────┬─────────┬─────────┬─────────┬─────────┐
+ value:     │    4    │    0    │   10    │    0    │   25    │
+            │ iRO[0]  │ iRO[1]  │ glyph A │ (hole)  │ glyph C │
+            └────┬────┴─────────┴─────────┴─────────┴─────────┘
+                 └─ "+4 bytes = +2 slots from MY slot" ─▶ slot 2 (start of this run)
+                       then step +(c − startCode) slots into it</pre>
+  <ul>
+    <li><code>'A'</code> → 槽位 2 + 0 = <strong>10</strong></li>
+    <li><code>'B'</code> → 槽位 2 + 1 = <strong>0</strong> ⇒ <code>.notdef</code>（那个洞）</li>
+    <li><code>'C'</code> → 槽位 2 + 2 = <strong>25</strong></li>
+  </ul>
+  <p>写成对这条合并带子的单个索引（<code>idRangeOffset[idx]</code> 就住在槽位
+  <code>idx</code>）：</p>
+<pre><code>slot = idx + idRangeOffset[idx]//2 + (c − startCode[idx])
+       └─┬─┘   └────────┬────────┘   └────────┬────────┘
+   self-relative base   bytes → slots      step into the run
+gid  = strip[slot]
+gid  = 0  ?  .notdef   :   (gid + idDelta[idx]) &amp; 0xFFFF</code></pre>
+
+  <div class="callout warn">
+    <span class="label">要避开的那个两字符 bug</span>
+    基址是 <code>idx</code>（偏移是自相对的——从<em>那个</em>单元量起），
+    <code>//2</code> 负责把<strong>字节换算成槽位</strong>。写成 <code>val + val//2</code>（保留
+    字节值），或者丢掉 <code>idx</code> 基址，都会让你越过目标几千个单元——
+    而且它只咬 <code>idRangeOffset != 0</code> 这条路径，简单路径照常“能用”，把问题藏得严严实实。
+  </div>
+
+  <div class="callout proof">
+    <span class="label">这款字体实际怎么用</span>
+    在它的 1532 个 format 4 分段里，<strong>564 个走 glyphIdArray 路径</strong>——而且<em>这 564 个全部
+    <code>idDelta = 0</code></em>，<strong>内部没有洞</strong>。所以在这里 <code>glyphIdArray</code>
+    纯粹用于<em>散乱的字形 ID</em>（比如 ASCII，字形没按码位顺序排），从不用于
+    洞，而这条路径上的 <code>idDelta</code> 什么也不干。<code>0 ⇒ .notdef</code> 规则依然是
+    强制的——正是它<em>允许</em>洞的存在——这款字体只是恰好一个洞也没用。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.8</span><span class="x-kind code">编程题</span></div>
+    <p><strong>不走 <code>.cmap</code> 捷径，把一个码位手工穿过 format 4。</strong>拿到
+    一张 format 4 子表的原始字节，自己用 <code>struct</code> 解析表头和
+    四个数组，然后选一个字符（试试 <code>永</code> U+6C38，想走简单路径就
+    选个数字），按 <code>idRangeOffset==0</code> /
+    <code>!=0</code> 规则一路解析到字形 ID。用 <code>getBestCmap()</code>（或 <code>getGlyphID</code>）验证。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      子表能自我序列化：<code>raw = subtable.compile(font)</code> 给出的正是那份字节。
+      表头是七个大端序 <code>uint16</code>（<code>"&gt;7H"</code>）；四个数组按顺序跟在后面，
+      每个 <code>segCount</code> 条——但 <code>idDelta</code> 是<strong>带符号的</strong>
+      （<code>"&gt;…h"</code>），还要记得 <code>endCode</code> 后面那 2 字节的 <code>reservedPad</code>。
+      指针路径的偏移是从 <code>idRangeOffset[i]</code> 自身的地址量起的。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      <code>永</code>（U+6C38）的正确结果是 <strong>gid 9078</strong>——用
+      <code>font.getGlyphID('永') == 9078</code> 确认。（像 <code>'5'</code> U+0035 这样的数字走
+      <code>idRangeOffset==0</code> 的简单路径：gid <code>= 0x35 + 210 = 263</code>。）真正的检验标准是：
+      无论你选了哪个字符，手算出的 gid 都和 <code>getGlyphID</code> 一致。
+    </details>
+    <p class="check-note">自查见上——或把你的解析器和结果贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <h2>Format 12：清醒的重新设计</h2>
+  <p>format 12 覆盖完整的 32 位空间，而且简单得多。它的表头 16 字节，之后是一列
+  平铺的 12 字节<strong>分组</strong>：</p>
+  <table>
+    <tr><th class="mono">字段</th><th>类型</th><th>值（这款字体）</th></tr>
+    <tr><td class="mono">format</td><td>uint16</td><td>12</td></tr>
+    <tr><td class="mono">reserved</td><td>uint16</td><td>0</td></tr>
+    <tr><td class="mono">length</td><td>uint32</td><td>166924</td></tr>
+    <tr><td class="mono">language</td><td>uint32</td><td>0</td></tr>
+    <tr><td class="mono">nGroups</td><td>uint32</td><td>13909</td></tr>
+    <tr><td class="mono">groups[ ]</td><td>3×uint32</td><td>(startCharCode, endCharCode, startGlyphID)</td></tr>
+  </table>
+  <p>每个分组的意思是“码位 <code>startChar … endChar</code> 映射到从
+  <code>startGlyphID</code> 开始的连续字形 ID”。查表不值一提：找到满足
+  <code>startChar ≤ c ≤ endChar</code> 的分组，然后 <code>gid = startGlyphID + (c − startChar)</code>。没有
+  <code>idDelta</code>，没有 <code>idRangeOffset</code>，没有指针把戏。</p>
+
+<pre><code>group for 一: startChar=U+4DBE  endChar=U+4E49  startGID=3105
+gid = 3105 + (0x4E00 − 0x4DBE) = 3105 + 66 = 3171   → "u4E00"</code></pre>
+
+  <div class="callout proof">
+    <span class="label">证明你解析对了的交叉验证</span>
+    format 4 经带符号的 <code>idDelta</code> 算出 <code>一</code> → gid <strong>3171</strong>；format 12
+    经分组算术算出 <code>一</code> → gid <strong>3171</strong>。两种完全不同的
+    编码，同一个答案——因为它们编码的是同一份映射。当你的手工解析和
+    另一张子表一致（也和 <code>getGlyphID</code> 一致）时，你就知道字节读对了。
+  </div>
+
+  <!-- ───────────────────────── TOOLING ───────────────────────── -->
+  <span class="section-tag tool">工具与探查</span>
+  <h2>自己动手探索字体</h2>
+
+  <p>方法名你不会全记住——没人记得住。真正的本事是<strong>拷问
+  对象本身</strong>，而不是去翻文档。对任何 fontTools 对象，三行万能配方：</p>
+<pre><code><span class="kw">type</span>(obj)                                   <span class="cmt"># what class is this?</span>
+[a <span class="kw">for</span> a <span class="kw">in</span> <span class="kw">dir</span>(obj) <span class="kw">if</span> <span class="kw">not</span> a.startswith(<span class="str">"_"</span>)]   <span class="cmt"># what can it do?</span>
+<span class="kw">help</span>(obj.some_method)                       <span class="cmt"># what does that do?</span></code></pre>
+
+  <p>对 <code>font['cmap']</code> 跑一遍，你会发现它是个 <code>table__c_m_a_p</code>，它的
+  公开接口——也就是“除了 <code>.tables</code> 还有什么”的答案——是：</p>
+  <table>
+    <tr><th class="mono">font['cmap'] 上的成员</th><th>返回 / 作用</th></tr>
+    <tr><td class="mono">.tables</td><td>原始子表对象的列表</td></tr>
+    <tr><td class="mono">.getBestCmap()</td><td>自动挑选最优 Unicode 子表 → <code>{codepoint: glyphName}</code> 字典</td></tr>
+    <tr><td class="mono">.getcmap(plat, enc)</td><td>按 <code>(platformID, platEncID)</code> 取某一张子表</td></tr>
+    <tr><td class="mono">.buildReversed()</td><td>反转映射 → <code>{glyphName: {codepoints}}</code>（如 <code>{'space': {32}}</code>）</td></tr>
+    <tr><td class="mono">.compile(font)</td><td>重新序列化成<strong>字节</strong>——正是我们手工解析的那份字节</td></tr>
+    <tr><td class="mono">.toXML() / decompile()</td><td>TTX 文本形式 / 从字节解析</td></tr>
+  </table>
+
+  <p>而一张子表（<code>cmap_format_4</code>）暴露的是：
+  <code>.cmap</code>（那个字典）、<code>.format</code>、<code>.platformID</code>、<code>.platEncID</code>、
+  <code>.language</code>、<code>.length</code>、<code>.isUnicode()</code>、<code>.isSymbol()</code>、
+  <code>.getEncoding()</code>、<code>.compile()</code>、<code>.toXML()</code>。所以
+  <code>.compile(font)</code> 就是你从整洁的 Python 对象下到原始字节的那扇门——上面的
+  二进制细读正是这么拿到数据的。</p>
+
+  <h3>值得认识的命令行工具</h3>
+  <table>
+    <tr><th>工具</th><th>用途</th></tr>
+    <tr><td class="mono">ttx -t cmap font.ttf</td><td>只把 cmap 转储成可读的 <code>.ttx</code> XML 文件（fontTools）</td></tr>
+    <tr><td class="mono">ttx -l font.ttf</td><td>列出每张表的 offset/大小（模块 1 的表目录，一步到位）</td></tr>
+    <tr><td class="mono">fontforge</td><td>图形界面/可脚本化的编辑器——它的 <em>Encoding</em> 视图<em>就是</em>可视化的 cmap</td></tr>
+    <tr><td class="mono">hb-shape font.ttf "A一"</td><td>HarfBuzz：显示整形后最终的字形 ID（模块 6 的预告）</td></tr>
+  </table>
+
+  <div class="callout">
+    <span class="label">要养成的习惯</span>
+    当解读环节递给你 <code>font['cmap'].tables</code> 时，别照单全收——对它和它的
+    一个元素跑跑 <code>dir()</code>，见到陌生的东西就扫一眼 <code>help()</code>。这么戳上五
+    分钟，比任何参考手册都更能教会你对象模型。
+  </div>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">2.9</span><span class="x-kind code">编程题</span></div>
+    <p><strong>拷问对象模型。</strong>不读文档，用三行配方
+    （<code>type</code> / <code>dir</code> / <code>help</code>）摸清
+    <code>font['cmap']</code> 和它某张子表的 API。报告<strong>三个你之前没用过
+    的方法</strong>，各用一行说明它返回什么。然后实际调用其中两个——例如
+    <code>buildReversed()</code> 和 <code>getcmap(3, 1)</code>——展示一小段输出。加分项：
+    对这款字体跑 <code>ttx -t cmap</code>，浏览一下生成的 XML。</p>
+    <details><summary>卡住了？给个方向（不给完整答案）</summary>
+      <code>[a for a in dir(font['cmap']) if not a.startswith('_')]</code> 列出公开接口；
+      <code>help(font['cmap'].buildReversed)</code> 解释其中一个。子表就是
+      <code>font['cmap'].tables[0]</code>；对它也 <code>dir()</code> 一下。<code>ttx</code> 随
+      fontTools 一起安装（<code>ttx</code> 或 <code>python -m fontTools.ttx</code>）。
+    </details>
+    <details><summary>✓ 核对答案</summary>
+      没有唯一正确答案，不过 <code>font['cmap']</code> 完整的公开接口是：
+      <code>tables, getBestCmap, getcmap, buildReversed, buildReversedMin, compile, decompile, toXML,
+      fromXML, tableVersion</code>。子表另有 <code>cmap, format, platformID, platEncID, language,
+      length, isUnicode, isSymbol, getEncoding, compile, toXML</code>。不错的“没用过”候选：
+      <code>buildReversed()</code>（字形→码位）、<code>getcmap(3,1)</code>（取单张子表）、
+      <code>compile(font)</code>（回到字节）。
+    </details>
+    <p class="check-note">自查见上——或把你的三个发现贴给 AI 导师，让它核对。</p>
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="2">标记本模块完成</button>
+
+  <div class="pager">
+    <a class="prev" href="01-sfnt-container.zh.html"><span class="dir">←</span><span class="ttl">01 · sfnt 容器</span></a>
+    <a class="next" href="03-outlines.zh.html"><span class="dir">下一模块 →</span><span class="ttl">03 · 轮廓</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

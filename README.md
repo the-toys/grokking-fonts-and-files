@@ -9,7 +9,8 @@ bundled (via Git LFS) so anyone can reproduce and check every number.
 
 ## Read it
 
-**Online:** <https://the-toys.github.io/grokking-fonts-and-files/>
+**Online:** <https://the-toys.github.io/grokking-fonts-and-files/> — available in English and
+Chinese (中文版), switchable via the button in the top-right corner.
 
 **Locally:** it's a static site — no build step.
 
@@ -23,7 +24,8 @@ python3 -m http.server   # then visit http://localhost:8000
 
 ```
 index.html              course home + module cards
-modules/                one HTML page per module (01–07)
+index.zh.html           Chinese home page (each page has a *.zh.html twin)
+modules/                one HTML page per module (01–07) + Chinese twins
 assets/style.css        shared styling (dark/light auto)
 assets/app.js           sidebar nav, progress (localStorage), copy buttons
 specimens/SPECIMENS.md  every verified number/byte used in the lessons
