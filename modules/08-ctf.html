@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>08 · CTF challenges</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">Bonus round</p>
+  <h1>Two font CTF challenges</h1>
+  <p class="lede">The text you see on screen is the <em>end</em> of a pipeline: code points go
+  through <code>cmap</code> to glyph IDs (Module 2), glyph IDs through <code>glyf</code> to outlines
+  (Module 3), and the whole run gets rewritten by shaping (Module 6) before a single pixel is drawn.
+  Every one of those stages is a place to <strong>hide meaning</strong> — which is exactly why "font"
+  is a recurring capture-the-flag genre. Here are two classic archetypes, each shipping a <strong>real,
+  tiny font you can download</strong> and crack with the tools this course already taught you.</p>
+  <p class="legend">Both fonts are subset from the specimen font and rebuilt by
+  <code>specimens/ctf/build_ctf.py</code>, which self-verifies (recovers each flag before writing the
+  file). Nothing here is decoration — the flags are genuinely in the bytes. Flags are
+  <span class="flag">flag{…}</span>.</p>
+
+  <div class="callout key">
+    <span class="label">The one idea behind both</span>
+    What a font <em>renders</em> and what its <em>bytes literally say</em> are two different things,
+    joined by a lookup you can read. A challenge hides the flag in the gap: challenge 1 puts it in the
+    <code>cmap</code> (the character→glyph lookup), challenge 2 puts it in <code>GSUB</code> (the
+    glyph→glyph rewrite). Solving means <strong>reading the lookup instead of trusting the render.</strong>
+  </div>
+
+  <!-- ───────────────────────── CHALLENGE 1 ───────────────────────── -->
+  <span class="section-tag ctf">challenge · cmap</span>
+  <h2>1 · The rendered text lies</h2>
+
+  <p>A scraper pulled some text off a page and got back a run of <strong>"tofu"</strong> — code points
+  in the Private-Use Area (<code>U+E000</code>, <code>U+E001</code>, …) that show as empty boxes in any
+  normal font. But the page shipped its own font, and rendered <em>with that font</em> the same code
+  points spelled out a flag. You have the font. Recover the flag.</p>
+
+  <a class="dl" href="../specimens/ctf/cmap_swap.ttf" download>cmap_swap.ttf</a>
+  <a class="dl" href="../specimens/ctf/leaked.txt" download>leaked.txt</a>
+  <p class="legend"><code>leaked.txt</code> is the exact decoy string the scraper captured: the code
+  points <code>U+E000 … U+E017</code>, in order. Rendering it with <code>cmap_swap.ttf</code> displays
+  the flag — but you can recover it without rendering anything at all.</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">C1</span><span class="x-kind concept">cmap</span></div>
+    <p><strong>Find the flag.</strong> This is exactly the anti-scraping trick real sites use (猫眼,
+    起点, and friends): the HTML carries meaningless code points, and a bundled font's <code>cmap</code>
+    maps them to the glyphs that draw the real characters. So <em>copying</em> the text yields garbage,
+    but <em>looking</em> at it reads fine. Invert the map and read the flag off the glyphs.</p>
+    <details><summary>Hint</summary>
+      From Module 2: <code>font.getBestCmap()</code> gives you <code>{codepoint: glyphName}</code>.
+      This font's cmap contains <em>only</em> the Private-Use code points — nothing maps ASCII. The
+      glyph <em>names</em> are still intact (they live in <code>post</code>, "just for humans" — Module
+      2), so a glyph named <code>braceleft</code> draws <code>{</code>. Walk the code points
+      <strong>in sorted order</strong> and translate each glyph name back to its character.
+    </details>
+    <details><summary>Show solution</summary>
+      <p>The whole solve is one cmap inversion — no rendering, no font library beyond fontTools:</p>
+<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+<span class="kw">from</span> fontTools.agl <span class="kw">import</span> toUnicode      <span class="cmt"># glyph name -> character</span>
+
+f = TTFont(<span class="str">"cmap_swap.ttf"</span>)
+cmap = f.getBestCmap()                 <span class="cmt"># {codepoint: glyphName}, Private-Use only</span>
+flag = <span class="str">""</span>.join(toUnicode(cmap[cp]) <span class="kw">for</span> cp <span class="kw">in</span> <span class="fn">sorted</span>(cmap))
+<span class="fn">print</span>(flag)</code></pre>
+      <p>The cmap holds <code>U+E000→f</code>, <code>U+E001→l</code>, <code>U+E002→a</code>,
+      <code>U+E003→g</code>, <code>U+E004→braceleft</code>, … Sorting by code point recovers the
+      author's order (that ordering is the <em>only</em> place the sequence is stored — the glyphs
+      themselves sit in the file in plain GID order, so dumping <code>post</code> alone gives you the
+      letter <em>set</em> but not the flag). Output:</p>
+      <p><span class="flag">flag{c0d3po1nts_can_l13}</span></p>
+      <p><strong>Why "cmap can lie" (Module 2, made literal):</strong> the cmap is a <em>lookup</em>,
+      not an identity — the byte <code>U+E000</code> has no inherent glyph, only the one this table
+      assigns it. A hardened version would strip the <code>post</code> names (set it to format 3.0),
+      forcing you to <em>render</em> each mapped glyph and read the outlines instead (Module 3) — the
+      same idea, one rung harder.</p>
+    </details>
+  </div>
+
+  <!-- ───────────────────────── CHALLENGE 2 ───────────────────────── -->
+  <span class="section-tag ctf">challenge · GSUB</span>
+  <h2>2 · The flag that only exists while shaping</h2>
+
+  <p>This font's <code>cmap</code> is <strong>honest</strong> — dump it and every character maps to
+  itself, <code>@</code> to an at-sign, <code>a</code> to an <code>a</code>. There is no flag in the
+  cmap, none in the glyph names, nothing for <code>strings</code> to find. Yet a banner on the site
+  turned a lone <code>@</code> into a whole flag on screen. Where did it come from?</p>
+
+  <a class="dl" href="../specimens/ctf/gsub_reveal.ttf" download>gsub_reveal.ttf</a>
+  <p class="legend">The flag is assembled at <em>shaping</em> time — the step between "characters" and
+  "final glyphs" (Module 6). It exists in the rendered run but never as stored text.</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">C2</span><span class="x-kind concept">GSUB</span></div>
+    <p><strong>Find the flag.</strong> Recall the pipeline from Module 6: <code>cmap</code> →
+    <code>GSUB</code> (rewrite) → <code>GPOS</code> (reposition) → draw. A <code>GSUB</code> rule can do
+    what a <code>cmap</code> physically cannot — turn <strong>one</strong> glyph into <strong>many</strong>
+    (a multiple substitution). Here one <code>calt</code> lookup expands the seed glyph <code>@</code>
+    into the full flag glyph run. Read the lookup, or just shape the seed.</p>
+    <details><summary>Hint</summary>
+      Two ways in. <strong>Static:</strong> dump the layout table — <code>ttx -t GSUB
+      gsub_reveal.ttf</code>, or walk it in fontTools — and look for a <em>MultipleSubst</em>
+      (LookupType 2). Its <code>.mapping</code> is <code>{inputGlyph: [outputGlyphs]}</code>.
+      <strong>Dynamic:</strong> shape the string <code>"@"</code> with HarfBuzz (Module 6's
+      <code>hb.shape</code>) and read out the resulting glyph names.
+    </details>
+    <details><summary>Show solution</summary>
+      <p><strong>Static — read the substitution straight out of GSUB:</strong></p>
+<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+<span class="kw">from</span> fontTools.agl <span class="kw">import</span> toUnicode
+
+f = TTFont(<span class="str">"gsub_reveal.ttf"</span>)
+<span class="kw">for</span> lookup <span class="kw">in</span> f[<span class="str">"GSUB"</span>].table.LookupList.Lookup:
+    <span class="kw">for</span> sub <span class="kw">in</span> lookup.SubTable:
+        <span class="kw">if</span> <span class="fn">getattr</span>(sub, <span class="str">"mapping"</span>, <span class="kw">None</span>):        <span class="cmt"># MultipleSubst (type 2)</span>
+            <span class="kw">for</span> src, dst <span class="kw">in</span> sub.mapping.items():
+                <span class="fn">print</span>(src, <span class="str">"->"</span>, <span class="str">""</span>.join(toUnicode(g) <span class="kw">for</span> g <span class="kw">in</span> dst))</code></pre>
+      <p>prints <code>at -> flag{gsub_1s_a_r3wr1t3r}</code>. The <code>@</code> glyph is mapped to the
+      24-glyph sequence <code>[f, l, a, g, braceleft, g, s, u, b, …, braceright]</code>.</p>
+      <p><strong>Dynamic — let the shaper do it (Module 6):</strong></p>
+<pre><code><span class="kw">import</span> uharfbuzz <span class="kw">as</span> hb
+face = hb.Face(<span class="fn">open</span>(<span class="str">"gsub_reveal.ttf"</span>, <span class="str">"rb"</span>).read())
+buf = hb.Buffer(); buf.add_str(<span class="str">"@"</span>); buf.guess_segment_properties()
+hb.shape(hb.Font(face), buf, {<span class="str">"calt"</span>: <span class="kw">True</span>})
+order = TTFont(<span class="str">"gsub_reveal.ttf"</span>).getGlyphOrder()
+<span class="fn">print</span>(<span class="str">""</span>.join(order[i.codepoint] <span class="kw">for</span> i <span class="kw">in</span> buf.glyph_infos))</code></pre>
+      <p>One input cluster shapes into 24 glyphs. The flag:</p>
+      <p><span class="flag">flag{gsub_1s_a_r3wr1t3r}</span></p>
+      <p><strong>Why the cmap couldn't do this (Module 2 vs 6):</strong> a <code>cmap</code> maps each
+      code point to exactly <em>one</em> glyph — it cannot fan one input out into a run, and it cannot
+      depend on context. Rewriting a glyph <em>stream</em> is <code>GSUB</code>'s job, and it happens
+      after the cmap, only while shaping. That is why the flag is invisible to <code>strings</code>, to
+      the cmap, and to the glyph names — it is not <em>stored</em> anywhere, it is <em>computed</em>.</p>
+    </details>
+  </div>
+
+  <div class="callout proof">
+    <span class="label">Reproduce / harden</span>
+    <code>~/.venv/bin/python specimens/ctf/build_ctf.py</code> rebuilds both fonts from the specimen and
+    re-verifies each flag before writing it (prints <code>PASS</code>/<code>PASS</code>). Want them
+    harder? Strip <code>post</code> names so challenge 1 forces outline rendering (Module 3); swap
+    challenge 2's plain multiple-substitution for a <em>chained-context</em> lookup so the flag only
+    fires next to a trigger you must first discover in the <code>ScriptList</code>/<code>FeatureList</code>.
+  </div>
+
+  <div class="callout">
+    <span class="label">The other classic you now have the tools for</span>
+    A third common archetype hides the flag in the <strong>outlines</strong>: ordinary-looking cmap, but
+    glyphs whose curves draw the flag characters, mapped to scattered code points so they never appear in
+    normal text — you dump or render every glyph to find them (pure Module 3). Same principle as these
+    two: trust the bytes, not the render.
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="8">Mark module complete</button>
+
+  <div class="pager">
+    <a class="prev" href="07-packaging.html"><span class="dir">←</span><span class="ttl">07 · Packaging &amp; frontiers</span></a>
+    <a class="next" href="../index.html"><span class="dir">done →</span><span class="ttl">Home</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

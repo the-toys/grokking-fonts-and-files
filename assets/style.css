@@ -89,8 +89,18 @@ hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
 .section-tag.ex { background:#3a2f1e; color:var(--yellow); }
 .section-tag.binary { background:#2e2540; color:var(--magenta); }
 .section-tag.tool { background:#10303a; color:var(--cyan); }
+.section-tag.ctf { background:#3a1e28; color:var(--red); }
 @media (prefers-color-scheme: light){ .section-tag.walk{background:#dff0d8;} .section-tag.ex{background:#fcefd3;}
-  .section-tag.binary{background:#ece4fb;} .section-tag.tool{background:#d6eef7;} }
+  .section-tag.binary{background:#ece4fb;} .section-tag.tool{background:#d6eef7;} .section-tag.ctf{background:#fbe0e6;} }
+
+/* CTF challenge bits */
+.dl { display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:13px;
+  text-decoration:none; color:var(--fg); background:var(--bg-card); border:1px solid var(--border);
+  border-radius:8px; padding:8px 14px; margin:8px 12px 8px 0; }
+.dl:hover { border-color:var(--accent); color:var(--fg); }
+.dl::before { content:"⬇"; color:var(--accent); }
+.flag { font-family:var(--mono); font-weight:700; color:var(--green);
+  background:var(--bg-code); padding:2px 8px; border-radius:6px; }
 
 /* hex byte-map: highlight field groups in a raw dump */
 .bytemap { font-family: var(--mono); font-size: 13px; line-height: 1.9; }

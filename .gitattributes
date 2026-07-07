@@ -1,1 +1,6 @@
 *.ttf filter=lfs diff=lfs merge=lfs -text
+
+# The CTF challenge fonts are tiny (~4.5 KB) and must download as real bytes
+# from GitHub Pages, so keep them out of LFS (Pages serves LFS files as
+# pointer stubs, which would break the challenges).
+specimens/ctf/*.ttf filter= diff= merge= -text

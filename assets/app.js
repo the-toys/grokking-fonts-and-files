@@ -12,6 +12,7 @@ const MODULES = [
   { n: 5, file: "05-families.html", title: "Identity & families", zh: "身份与家族" },
   { n: 6, file: "06-shaping.html", title: "Shaping & layout", zh: "整形与布局" },
   { n: 7, file: "07-packaging.html", title: "Packaging & frontiers", zh: "打包与前沿" },
+  { n: 8, file: "08-ctf.html", title: "CTF challenges", zh: "CTF 挑战" },
 ];
 
 const T = ZH ? {

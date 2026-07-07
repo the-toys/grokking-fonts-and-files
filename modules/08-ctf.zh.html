@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>08 · CTF 挑战</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main>
+  <p class="eyebrow">附加关卡</p>
+  <h1>两道字体 CTF 挑战</h1>
+  <p class="lede">屏幕上你看到的文字，只是一条流水线的<em>末端</em>：码位经 <code>cmap</code> 变成字形 ID
+  （模块 2），字形 ID 经 <code>glyf</code> 变成轮廓（模块 3），整串还要经整形（模块 6）改写一遍，
+  然后才落下第一个像素。这条链上的<strong>每一站，都能藏东西</strong>——这正是“字体”成为 CTF
+  常客的原因。下面两道题各是一种经典套路，每道都附一只<strong>真实的、极小的字体供你下载</strong>，
+  用本课程已经教过的工具就能破。</p>
+  <p class="legend">两只字体都由 <code>specimens/ctf/build_ctf.py</code> 从样本字体子集化重建，
+  脚本会自我校验（写文件前先把 flag 复原出来）。这里没有一处是摆设——flag 是真真切切藏在字节里的。
+  flag 形如 <span class="flag">flag{…}</span>。</p>
+
+  <div class="callout key">
+    <span class="label">两道题背后是同一个念头</span>
+    字体<em>渲染出来</em>的东西，和它的<em>字节字面上说</em>的东西，本是两码事，中间靠一张你读得懂的
+    查找表相连。题目就把 flag 藏在这道缝里：第一题藏进 <code>cmap</code>（字符→字形的查找表），
+    第二题藏进 <code>GSUB</code>（字形→字形的改写）。破题之道，就是<strong>去读那张查找表，而不是
+    轻信渲染结果。</strong>
+  </div>
+
+  <!-- ───────────────────────── CHALLENGE 1 ───────────────────────── -->
+  <span class="section-tag ctf">挑战 · cmap</span>
+  <h2>1 · 渲染出来的文字在撒谎</h2>
+
+  <p>某个爬虫从页面上扒下一段文字，拿到的却是一串<strong>“豆腐块”</strong>——私用区
+  （<code>U+E000</code>、<code>U+E001</code>……）里的码位，在任何正常字体里都显示成空方框。可那个页面
+  自带了一只字体，<em>用它来渲染</em>时，同样这串码位却拼出了一个 flag。字体在你手上，把 flag 找出来。</p>
+
+  <a class="dl" href="../specimens/ctf/cmap_swap.ttf" download>cmap_swap.ttf</a>
+  <a class="dl" href="../specimens/ctf/leaked.txt" download>leaked.txt</a>
+  <p class="legend"><code>leaked.txt</code> 就是爬虫抓到的那串诱饵：码位 <code>U+E000 … U+E017</code>，按序排列。
+  用 <code>cmap_swap.ttf</code> 渲染它就会显示 flag——但你根本不必渲染，也能把 flag 还原出来。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">C1</span><span class="x-kind concept">cmap</span></div>
+    <p><strong>找出 flag。</strong>这正是真实网站惯用的反爬手法（猫眼、起点之流）：HTML 里塞的是一串毫无
+    意义的码位，靠随页附带的字体的 <code>cmap</code>，把它们映射到画出真实字符的那些字形。于是
+    <em>复制</em>文字得到的是乱码，<em>看</em>却看得清清楚楚。把这张映射反过来，从字形上读出 flag。</p>
+    <details><summary>提示</summary>
+      来自模块 2：<code>font.getBestCmap()</code> 给你一个 <code>{码位: 字形名}</code> 字典。
+      这只字体的 cmap <em>只</em>含那些私用区码位——没有一条映射 ASCII。字形<em>名</em>倒是原封未动
+      （它们住在 <code>post</code> 表里，“只为方便人看”——模块 2），所以名叫 <code>braceleft</code>
+      的字形画的就是 <code>{</code>。<strong>按码位从小到大</strong>遍历，把每个字形名翻回它对应的字符。
+    </details>
+    <details><summary>看答案</summary>
+      <p>整道题就是一次 cmap 反查——不用渲染，除了 fontTools 什么库都不用：</p>
+<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+<span class="kw">from</span> fontTools.agl <span class="kw">import</span> toUnicode      <span class="cmt"># glyph name -> character</span>
+
+f = TTFont(<span class="str">"cmap_swap.ttf"</span>)
+cmap = f.getBestCmap()                 <span class="cmt"># {codepoint: glyphName}, Private-Use only</span>
+flag = <span class="str">""</span>.join(toUnicode(cmap[cp]) <span class="kw">for</span> cp <span class="kw">in</span> <span class="fn">sorted</span>(cmap))
+<span class="fn">print</span>(flag)</code></pre>
+      <p>cmap 里存着 <code>U+E000→f</code>、<code>U+E001→l</code>、<code>U+E002→a</code>、
+      <code>U+E003→g</code>、<code>U+E004→braceleft</code>……按码位排序，就还原了作者安排的顺序
+      （这个顺序是序列<em>唯一</em>被记下来的地方——字形本身在文件里是按 GID 平铺的，所以单看
+      <code>post</code> 只能拿到字符的<em>集合</em>，拼不出 flag）。输出：</p>
+      <p><span class="flag">flag{c0d3po1nts_can_l13}</span></p>
+      <p><strong>为什么说“cmap 会撒谎”（模块 2 的字面演绎）：</strong>cmap 是一张<em>查找表</em>，
+      不是恒等映射——<code>U+E000</code> 这个字节本身没有什么天生的字形，只有这张表指派给它的那一个。
+      更硬核的版本会把 <code>post</code> 名字剥掉（设成 3.0 格式），逼你去<em>渲染</em>每个被映射的字形、
+      从轮廓认字（模块 3）——同一个道理，只是难一档。</p>
+    </details>
+  </div>
+
+  <!-- ───────────────────────── CHALLENGE 2 ───────────────────────── -->
+  <span class="section-tag ctf">挑战 · GSUB</span>
+  <h2>2 · 只在整形时才存在的 flag</h2>
+
+  <p>这只字体的 <code>cmap</code> 是<strong>老实</strong>的——你把它导出来看，每个字符都映射到自己：
+  <code>@</code> 映射到 at 符号，<code>a</code> 映射到 <code>a</code>。cmap 里没有 flag，字形名里没有，
+  <code>strings</code> 也一无所获。可网站上一条横幅，硬是把孤零零一个 <code>@</code> 在屏幕上变成了一整个
+  flag。它是从哪儿冒出来的？</p>
+
+  <a class="dl" href="../specimens/ctf/gsub_reveal.ttf" download>gsub_reveal.ttf</a>
+  <p class="legend">flag 是在<em>整形</em>那一步现拼出来的——就是“字符”与“最终字形”之间的那一环（模块 6）。
+  它只存在于渲染出的字形串里，从不以文本形式存下来。</p>
+
+  <div class="exercise">
+    <div class="x-head"><span class="x-id">C2</span><span class="x-kind concept">GSUB</span></div>
+    <p><strong>找出 flag。</strong>回忆模块 6 的流水线：<code>cmap</code> → <code>GSUB</code>（改写）→
+    <code>GPOS</code>（重定位）→ 绘制。<code>GSUB</code> 规则能做 <code>cmap</code> 物理上做不到的事——把
+    <strong>一个</strong>字形变成<strong>许多</strong>字形（多重替换）。这里，一条 <code>calt</code>
+    lookup 把种子字形 <code>@</code> 展开成整串 flag 字形。去读这条 lookup，或者干脆把种子整形一遍。</p>
+    <details><summary>提示</summary>
+      两条路。<strong>静态：</strong>把布局表导出来——<code>ttx -t GSUB gsub_reveal.ttf</code>，
+      或用 fontTools 遍历它——找一条<em>多重替换</em>（MultipleSubst，LookupType 2）。它的
+      <code>.mapping</code> 是 <code>{输入字形: [输出字形们]}</code>。<strong>动态：</strong>用 HarfBuzz
+      整形字符串 <code>"@"</code>（模块 6 的 <code>hb.shape</code>），把结果字形名读出来。
+    </details>
+    <details><summary>看答案</summary>
+      <p><strong>静态——直接从 GSUB 里把替换读出来：</strong></p>
+<pre><code><span class="kw">from</span> fontTools.ttLib <span class="kw">import</span> TTFont
+<span class="kw">from</span> fontTools.agl <span class="kw">import</span> toUnicode
+
+f = TTFont(<span class="str">"gsub_reveal.ttf"</span>)
+<span class="kw">for</span> lookup <span class="kw">in</span> f[<span class="str">"GSUB"</span>].table.LookupList.Lookup:
+    <span class="kw">for</span> sub <span class="kw">in</span> lookup.SubTable:
+        <span class="kw">if</span> <span class="fn">getattr</span>(sub, <span class="str">"mapping"</span>, <span class="kw">None</span>):        <span class="cmt"># MultipleSubst (type 2)</span>
+            <span class="kw">for</span> src, dst <span class="kw">in</span> sub.mapping.items():
+                <span class="fn">print</span>(src, <span class="str">"->"</span>, <span class="str">""</span>.join(toUnicode(g) <span class="kw">for</span> g <span class="kw">in</span> dst))</code></pre>
+      <p>打印出 <code>at -> flag{gsub_1s_a_r3wr1t3r}</code>。<code>@</code> 字形被映射到了那串 24 个字形的
+      序列 <code>[f, l, a, g, braceleft, g, s, u, b, …, braceright]</code>。</p>
+      <p><strong>动态——让整形器替你做（模块 6）：</strong></p>
+<pre><code><span class="kw">import</span> uharfbuzz <span class="kw">as</span> hb
+face = hb.Face(<span class="fn">open</span>(<span class="str">"gsub_reveal.ttf"</span>, <span class="str">"rb"</span>).read())
+buf = hb.Buffer(); buf.add_str(<span class="str">"@"</span>); buf.guess_segment_properties()
+hb.shape(hb.Font(face), buf, {<span class="str">"calt"</span>: <span class="kw">True</span>})
+order = TTFont(<span class="str">"gsub_reveal.ttf"</span>).getGlyphOrder()
+<span class="fn">print</span>(<span class="str">""</span>.join(order[i.codepoint] <span class="kw">for</span> i <span class="kw">in</span> buf.glyph_infos))</code></pre>
+      <p>一个输入 cluster 被整形成了 24 个字形。flag：</p>
+      <p><span class="flag">flag{gsub_1s_a_r3wr1t3r}</span></p>
+      <p><strong>为什么 cmap 干不了这件事（模块 2 对比模块 6）：</strong><code>cmap</code> 把每个码位映射到
+      <em>恰好一个</em>字形——它没法把一个输入扇出成一串，也没法看上下文。改写字形<em>串</em>是
+      <code>GSUB</code> 的活儿，发生在 cmap 之后、只在整形时进行。这正是为什么这个 flag 对
+      <code>strings</code>、对 cmap、对字形名都隐形——它压根没<em>存</em>在任何地方，而是被<em>算</em>出来的。</p>
+    </details>
+  </div>
+
+  <div class="callout proof">
+    <span class="label">复现 / 加难</span>
+    <code>~/.venv/bin/python specimens/ctf/build_ctf.py</code> 会从样本字体重建两只字体，写文件前把每个
+    flag 重新验一遍（打印 <code>PASS</code>/<code>PASS</code>）。想更难？把 <code>post</code> 名字剥掉，
+    第一题就得靠渲染轮廓来破（模块 3）；把第二题那条朴素的多重替换换成<em>链式上下文</em> lookup，
+    flag 就只在某个触发串旁边才现身，而那个触发串还得你先从 <code>ScriptList</code>/<code>FeatureList</code>
+    里挖出来。
+  </div>
+
+  <div class="callout">
+    <span class="label">还有一种经典套路，你现在也有工具对付了</span>
+    第三种常见套路把 flag 藏进<strong>轮廓</strong>里：cmap 看着人畜无害，可某些字形的曲线画的正是 flag
+    的字符，还被映射到零散的码位上，正常文字里根本不露面——你得把每个字形都导出或渲染一遍才找得到
+    （纯模块 3）。道理和这两道题一样：信字节，别信渲染。
+  </div>
+
+  <button class="complete-btn" id="mark-complete" data-module="8">标记本模块完成</button>
+
+  <div class="pager">
+    <a class="prev" href="07-packaging.zh.html"><span class="dir">←</span><span class="ttl">07 · 打包与前沿</span></a>
+    <a class="next" href="../index.zh.html"><span class="dir">完 →</span><span class="ttl">首页</span></a>
+  </div>
+</main>
+<script src="../assets/app.js"></script>
+</body>
+</html>

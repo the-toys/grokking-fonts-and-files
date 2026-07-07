@@ -31,6 +31,7 @@ assets/app.js           sidebar nav, progress (localStorage), copy buttons
 specimens/SPECIMENS.md  every verified number/byte used in the lessons
 specimens/extract.py    reproduce all specimens from the real fonts (fonttools)
 specimens/fonts/        the two real fonts (Git LFS) + their OFL license
+specimens/ctf/          the two CTF challenge fonts + build_ctf.py (self-verifying)
 solutions/              worked solutions to the programming exercises
 ```
 
@@ -45,6 +46,7 @@ solutions/              worked solutions to the programming exercises
 | 5 | Identity & families | How do separate files become one family? |
 | 6 | Shaping & layout | How do glyphs combine and move? |
 | 7 | Packaging & frontiers | Collections, variable fonts, web fonts |
+| 8 | CTF challenges | Where can a font hide a flag? (cmap swap · GSUB reveal) |
 
 ## Reproduce the data
 
